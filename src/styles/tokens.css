@@ -1,0 +1,121 @@
+/* ---------------------------------------------------------------
+   Design tokens — Scandinavian minimal, dark-mode-first.
+   Flat, matte surfaces. No blur, no gloss, no gradients-as-chrome.
+   Functional color is limited to: blue (primary/neutral),
+   sage (on track), soft red (off track). Everything else is gray.
+   --------------------------------------------------------------- */
+
+:root,
+:root[data-theme='dark'] {
+  /* Surfaces — slightly warm neutral, never pure black */
+  --bg: #141517;
+  --surface: #1b1d20;
+  --surface-raised: #212429;
+  --surface-sunken: #101113;
+  --hairline: #2a2e33;
+  --hairline-strong: #363b41;
+
+  /* Text hierarchy */
+  --text-primary: #eceef1;
+  --text-secondary: #9aa2ab;
+  /* #858d95: lightened from #6b737c to clear WCAG AA (4.5:1) against
+     --surface-raised, the lightest dark-theme surface it appears on. */
+  --text-tertiary: #858d95;
+  --text-inverse: #14161a;
+
+  /* Functional accents */
+  --blue: #7ba7d9;
+  --blue-strong: #9ac0ea;
+  --blue-dim: rgba(123, 167, 217, 0.14);
+  --blue-line: rgba(123, 167, 217, 0.32);
+
+  --sage: #93b58c;
+  --sage-strong: #abcba4;
+  --sage-dim: rgba(147, 181, 140, 0.14);
+
+  --red: #cf8b84;
+  --red-strong: #e3a49d;
+  --red-dim: rgba(207, 139, 132, 0.14);
+
+  /* Neutral track for meters */
+  --track: #262a2f;
+
+  /* Radii — soft, consistent */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --r-pill: 999px;
+
+  /* Spacing scale */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  /* Type */
+  --font: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-num: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', Menlo,
+    Consolas, monospace;
+
+  --t-display: 44px;
+  --t-title: 26px;
+  --t-heading: 18px;
+  --t-body: 15px;
+  --t-small: 13px;
+  --t-micro: 11px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur: 220ms;
+
+  /* Elevation — matte, barely-there depth (no glow, no blur look) */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Light mode: stretch goal, same restrained philosophy. */
+:root[data-theme='light'] {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #efefec;
+  --hairline: #e3e3df;
+  --hairline-strong: #d2d2cd;
+
+  --text-primary: #1c1e20;
+  --text-secondary: #5c636a;
+  /* #666c73: darkened from #8b9198 to clear WCAG AA (4.5:1) against
+     --surface-sunken, the darkest light-theme surface it appears on. */
+  --text-tertiary: #666c73;
+  --text-inverse: #ffffff;
+
+  --blue: #3f74ad;
+  --blue-strong: #2f5f95;
+  --blue-dim: rgba(63, 116, 173, 0.1);
+  --blue-line: rgba(63, 116, 173, 0.3);
+
+  --sage: #5c8455;
+  --sage-strong: #4a6f44;
+  --sage-dim: rgba(92, 132, 85, 0.1);
+
+  --red: #b0615a;
+  --red-strong: #964a44;
+  --red-dim: rgba(176, 97, 90, 0.1);
+
+  --track: #e6e6e2;
+
+  --shadow-card: 0 1px 2px rgba(20, 22, 26, 0.06);
+  --shadow-float: 0 6px 20px rgba(20, 22, 26, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}

@@ -10,7 +10,7 @@
 
 import type { ISODate, MonthId } from '../types/models';
 import { isValidISODate, monthIdOf } from './dates.ts';
-import { parseAmount, round2 } from './money.ts';
+import { parseAmount } from './money.ts';
 
 /** One line in the bulk grid, straight off the inputs — amount is raw text. */
 export interface BulkRow {
@@ -84,12 +84,9 @@ export function partitionBulkRows(
     result.ready.push({
       index,
       monthId,
-      input: {
-        date: row.date,
-        amount: round2(amount),
-        category: row.category,
-        description,
-      },
+      // parseAmount already returns a 2dp value; the store rounds again on the
+      // way to storage.
+      input: { date: row.date, amount, category: row.category, description },
     });
   });
 

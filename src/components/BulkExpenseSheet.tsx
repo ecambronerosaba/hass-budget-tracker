@@ -1,8 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { ISODate } from '../types/models';
 import { FALLBACK_CATEGORY_ID } from '../data/seed';
-import { currentMonthId, expectedDateFor, monthLabel, today } from '../lib/dates';
+import {
+  currentMonthId,
+  expectedDateFor,
+  isValidISODate,
+  monthIdOf,
+  monthLabel,
+  today,
+} from '../lib/dates';
 import { partitionBulkRows, type BulkRow } from '../lib/bulkExpense';
+import { newId } from '../lib/id';
 import { sumAmounts } from '../lib/money';
 import { useApp } from '../state/store';
 import { Field, Sheet, useMoneyFormatter } from './ui';
@@ -22,8 +30,12 @@ import { IconClose, IconPlus } from './Icons';
 
 const STARTING_ROWS = 3;
 
-function blankRow(date: ISODate, category: string): BulkRow {
-  return { amount: '', description: '', category, date };
+/** A grid row is a BulkRow plus a stable id, so React keeps a row's inputs
+ *  bound to the same DOM node when a row above it is removed. */
+type GridRow = BulkRow & { id: string };
+
+function blankRow(date: ISODate, category: string): GridRow {
+  return { id: newId('brow'), amount: '', description: '', category, date };
 }
 
 export function BulkExpenseSheet({
@@ -33,7 +45,7 @@ export function BulkExpenseSheet({
   monthId: string;
   onClose: () => void;
 }) {
-  const { categories, settings, expenses, addExpense, notify, isLocked } = useApp();
+  const { categories, settings, expenses, addExpenses, notify, isLocked } = useApp();
   const money = useMoneyFormatter();
 
   const active = useMemo(() => categories.filter((c) => !c.archived), [categories]);
@@ -68,11 +80,14 @@ export function BulkExpenseSheet({
   }, [expenses]);
 
   const [defaultDate, setDefaultDate] = useState<ISODate>(seedDate);
-  const [rows, setRows] = useState<BulkRow[]>(() =>
+  const [rows, setRows] = useState<GridRow[]>(() =>
     Array.from({ length: STARTING_ROWS }, () => blankRow(seedDate, seedCategory)),
   );
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
+  // A synchronous latch: `saving` state only disables the button on the next
+  // render, so a fast double-tap on mobile can fire save() twice before that.
+  const savingRef = useRef(false);
 
   const parts = useMemo(() => partitionBulkRows(rows, isLocked), [rows, isLocked]);
   const flagged = useMemo(
@@ -99,42 +114,48 @@ export function BulkExpenseSheet({
 
   const save = async () => {
     setSubmitted(true);
-    if (!canSave || saving) return;
+    if (savingRef.current || !canSave) return;
+    savingRef.current = true;
     setSaving(true);
 
-    const savedIndices = new Set<number>();
-    const monthsHit = new Set<string>();
-    try {
-      for (const row of parts.ready) {
-        await addExpense(row.monthId, { ...row.input });
-        savedIndices.add(row.index);
-        monthsHit.add(row.monthId);
-      }
-    } catch (err) {
-      // Some rows may already be logged. Drop those and keep the rest on
-      // screen so a retry doesn't log them a second time.
-      setRows((rs) => rs.filter((_, i) => !savedIndices.has(i)));
+    const ready = parts.ready;
+    const { created, error } = await addExpenses(
+      ready.map((r) => ({ monthId: r.monthId, input: r.input })),
+    );
+
+    // The store writes rows in order, so `created` is the prefix of `ready`
+    // that persisted. Drop those rows; leave the rest — including the one
+    // that threw, which never reached storage — so a retry can't double-log.
+    const savedRowIndices = new Set(ready.slice(0, created.length).map((r) => r.index));
+
+    if (error) {
+      setRows((rs) => rs.filter((_, i) => !savedRowIndices.has(i)));
+      savingRef.current = false;
       setSaving(false);
       notify(
-        savedIndices.size > 0
-          ? `Logged ${savedIndices.size} of ${parts.ready.length}`
-          : "Couldn't log these",
+        created.length > 0 ? `Logged ${created.length} of ${ready.length}` : "Couldn't log these",
         {
-          detail: err instanceof Error ? err.message : 'Nothing else was saved — try again.',
+          detail:
+            error instanceof Error ? error.message : 'Nothing else was saved — try again.',
           tone: 'over',
         },
       );
       return;
     }
 
-    const count = savedIndices.size;
-    const elsewhere = [...monthsHit].filter((m) => m !== monthId);
-    notify(`${count} ${count === 1 ? 'expense' : 'expenses'} logged · ${money(readyTotal)}`, {
-      detail:
-        elsewhere.length > 0
-          ? `Some landed in ${elsewhere.map((m) => monthLabel(m, { year: false })).join(', ')}`
-          : undefined,
-    });
+    const elsewhere = [...new Set(created.map((e) => e.monthId))].filter((m) => m !== monthId);
+    notify(
+      `${created.length} ${created.length === 1 ? 'expense' : 'expenses'} logged · ${money(
+        sumAmounts(created.map((e) => e.amount)),
+      )}`,
+      {
+        detail:
+          elsewhere.length > 0
+            ? `Some landed in ${elsewhere.map((m) => monthLabel(m)).join(', ')}`
+            : undefined,
+      },
+    );
+    savingRef.current = false;
     onClose();
   };
 
@@ -161,8 +182,10 @@ export function BulkExpenseSheet({
           {rows.map((row, index) => {
             const showError = submitted && flagged.has(index);
             const lockedRow = submitted && parts.locked.includes(index);
+            const landsElsewhere =
+              !showError && isValidISODate(row.date) && monthIdOf(row.date) !== monthId;
             return (
-              <div className="bulkrow" key={index}>
+              <div className="bulkrow" key={row.id}>
                 <div className="bulkrow__top">
                   <div className="amount-input amount-input--sm">
                     <span className="amount-input__symbol">$</span>
@@ -225,6 +248,11 @@ export function BulkExpenseSheet({
                     {lockedRow
                       ? `${monthLabel(row.date.slice(0, 7))} is closed — change the date or remove this row.`
                       : 'Needs an amount above zero, a description, and a valid date.'}
+                  </span>
+                )}
+                {landsElsewhere && (
+                  <span className="stat__note">
+                    Lands in {monthLabel(monthIdOf(row.date))}, not {monthLabel(monthId)}.
                   </span>
                 )}
               </div>

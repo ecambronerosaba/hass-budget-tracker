@@ -70,6 +70,10 @@ try {
   if (!/3 ready/.test(ready)) throw new Error(`expected "3 ready", saw "${ready.trim()}"`);
   step(`running total reads "${ready.trim()}" — blank row ignored`);
 
+  // The row dated into another month says so inline, before any save.
+  await sheet.getByText(/^Lands in .*, not /).waitFor();
+  step('the back-dated row shows an inline "lands in another month" note');
+
   // A half-filled row must block the save.
   await row(4).amount.fill('99');
   await sheet.getByRole('button', { name: /^Save 3 expenses$/ }).click();

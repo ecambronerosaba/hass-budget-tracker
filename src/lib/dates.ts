@@ -100,6 +100,11 @@ export function addDays(iso: ISODate, days: number): ISODate {
   return toISODate(d);
 }
 
+/** The day-of-month (clamped to 1–31) that an ISO date falls on. */
+export function dayOfMonthOf(iso: ISODate): number {
+  return Math.min(31, Math.max(1, Number(iso.slice(8, 10)) || 1));
+}
+
 export function ordinal(n: number): string {
   const rem100 = n % 100;
   if (rem100 >= 11 && rem100 <= 13) return `${n}th`;

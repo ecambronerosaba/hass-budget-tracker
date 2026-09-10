@@ -19,6 +19,7 @@ node scripts/smoke.mjs http://localhost:4173             # the whole core loop, 
 node scripts/verify-integration.mjs http://localhost:4173 # focus, contrast, undo, persistence
 node scripts/verify-close-gate.mjs http://localhost:4173  # can't close an unreviewed month
 node scripts/verify-swipe-reset.mjs http://localhost:4173 # aborted swipe restores the card
+node scripts/verify-bulk-add.mjs http://localhost:4173    # bulk entry skips blanks, blocks partials, routes by date
 ```
 
 The `verify-*` scripts each pin a bug that shipped once. They assert behaviour the happy-path
@@ -55,6 +56,7 @@ reconciliation.
 | Monthly budget + audit trail of edits (§4.1) | `components/BudgetSheet.tsx`, `Month.budgetHistory` |
 | Split payments / reimbursements | `lib/expense.ts`, the split field in `ExpenseSheet` |
 | One-tap expense logging (§4.2) | `components/ExpenseSheet.tsx`, the FAB in `App.tsx` |
+| Bulk expense entry (§4.2) | `components/BulkExpenseSheet.tsx`, `lib/bulkExpense.ts`, "Add several" on the Expenses tab |
 | Live dashboard, pace and projection (§4.3) | `lib/projection.ts`, `screens/Dashboard.tsx` |
 | Recurring nudges, never auto-logged (§4.4) | `components/RecurringNudges.tsx` |
 | Statement import and exact auto-match (§4.5) | `lib/csv.ts`, `lib/reconcile.ts` |

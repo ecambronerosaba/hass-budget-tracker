@@ -8,9 +8,9 @@
  */
 
 import type { BankTransaction, Expense } from '../types/models';
-import { daysBetween } from './dates';
-import { sumGross, sumNet } from './expense';
-import { round2, sameAmount, toCents } from './money';
+import { daysBetween } from './dates.ts';
+import { sumGross, sumNet } from './expense.ts';
+import { round2, sameAmount, toCents } from './money.ts';
 
 export interface AutoMatchResult {
   transactions: BankTransaction[];

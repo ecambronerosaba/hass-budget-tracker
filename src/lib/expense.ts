@@ -13,7 +13,7 @@
  */
 
 import type { Expense } from '../types/models';
-import { fromCents, round2, toCents } from './money';
+import { fromCents, round2, toCents } from './money.ts';
 
 export function reimbursementOf(expense: Pick<Expense, 'reimbursement'>): number {
   return round2(Math.max(0, expense.reimbursement ?? 0));

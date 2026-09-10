@@ -34,6 +34,7 @@ import { clampReimbursement } from '../lib/expense';
 import { newId } from '../lib/id';
 import { round2 } from '../lib/money';
 import { autoMatch } from '../lib/reconcile';
+import { resolveRecurringFromExpense, type RecurringTemplateDraft } from '../lib/recurring';
 
 /* ------------------------------- types --------------------------------- */
 
@@ -122,6 +123,16 @@ export interface AppStore extends AppData {
   ) => Promise<void>;
   snoozeRecurring: (monthId: MonthId, recurringId: string, days?: number) => Promise<void>;
   skipRecurring: (monthId: MonthId, recurringId: string) => Promise<void>;
+  /**
+   * Promote a just-logged expense to a monthly template: reuse an active
+   * template of the same name or create one, then mark it confirmed for
+   * `monthId` so this month isn't nudged for it again.
+   */
+  registerRecurringFromExpense: (
+    monthId: MonthId,
+    expenseId: string,
+    draft: RecurringTemplateDraft,
+  ) => Promise<void>;
 
   startReconciliation: (
     monthId: MonthId,
@@ -616,6 +627,23 @@ export function AppProvider({
     [recordConfirmation, reload],
   );
 
+  const registerRecurringFromExpense = useCallback<AppStore['registerRecurringFromExpense']>(
+    async (monthId, expenseId, draft) => {
+      const resolution = resolveRecurringFromExpense(data.recurring, draft);
+      let recurringId: string;
+      if (resolution.kind === 'reuse') {
+        recurringId = resolution.id;
+      } else {
+        const created: RecurringExpense = { ...resolution.template, id: newId('rec') };
+        await repo().saveRecurring(created);
+        recurringId = created.id;
+      }
+      await recordConfirmation(monthId, recurringId, 'confirmed', { expenseId });
+      await reload();
+    },
+    [data.recurring, recordConfirmation, reload],
+  );
+
   /* -------------------------- reconciliation --------------------------- */
 
   const startReconciliation = useCallback<AppStore['startReconciliation']>(
@@ -829,6 +857,7 @@ export function AppProvider({
       confirmRecurring,
       snoozeRecurring,
       skipRecurring,
+      registerRecurringFromExpense,
       startReconciliation,
       setReconcileStage,
       linkTransaction,
@@ -845,7 +874,7 @@ export function AppProvider({
       unresolvedCounts, toasts, notify, dismissToast,
       setBudget, addExpense, updateExpense, deleteExpense, saveCategory, createCategory,
       saveRecurring, createRecurring, deleteRecurring, confirmRecurring, snoozeRecurring,
-      skipRecurring, startReconciliation, setReconcileStage, linkTransaction,
+      skipRecurring, registerRecurringFromExpense, startReconciliation, setReconcileStage, linkTransaction,
       addExpenseFromTransaction, resolveLoggedOnly, finishReconciliation,
       cancelReconciliation, updateSettings, exportBackup, importBackup,
     ],

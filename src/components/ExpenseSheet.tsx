@@ -1,7 +1,15 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import type { Expense, ISODate } from '../types/models';
 import { FALLBACK_CATEGORY_ID } from '../data/seed';
-import { currentMonthId, expectedDateFor, monthIdOf, monthLabel, today } from '../lib/dates';
+import {
+  currentMonthId,
+  dayOfMonthOf,
+  expectedDateFor,
+  monthIdOf,
+  monthLabel,
+  ordinal,
+  today,
+} from '../lib/dates';
 import { clampReimbursement } from '../lib/expense';
 import { parseAmount, round2 } from '../lib/money';
 import { sumNet } from '../lib/expense';
@@ -49,8 +57,17 @@ export function ExpenseSheet({
     notes?: string;
   }) => Promise<void> | void;
 }) {
-  const { categories, settings, addExpense, updateExpense, deleteExpense, notify, isLocked, expenses } =
-    useApp();
+  const {
+    categories,
+    settings,
+    addExpense,
+    updateExpense,
+    deleteExpense,
+    registerRecurringFromExpense,
+    notify,
+    isLocked,
+    expenses,
+  } = useApp();
   const month = useMonth(monthId);
   const monthExpenses = useMonthExpenses(monthId);
   const money = useMoneyFormatter();
@@ -116,6 +133,7 @@ export function ExpenseSheet({
     initialReimbursement > 0 ? String(initialReimbursement) : '',
   );
   const [splitOpen, setSplitOpen] = useState(initialReimbursement > 0);
+  const [makeRecurring, setMakeRecurring] = useState(false);
   const [saving, setSaving] = useState(false);
   const [touched, setTouched] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -134,6 +152,11 @@ export function ExpenseSheet({
   // happened to open against.
   const targetMonthId = monthIdOf(date);
   const crossesMonth = !expense && targetMonthId !== monthId;
+
+  // Only offered on the plain "log an expense" path — not when editing an
+  // existing row, and not when a caller (reconciliation, the recurring "log a
+  // different amount" sheet) has taken over saving.
+  const canMakeRecurring = !expense && !onSave && !locked;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -155,14 +178,29 @@ export function ExpenseSheet({
         await updateExpense(expense.id, values);
         notify('Expense updated');
       } else {
-        await addExpense(targetMonthId, values);
+        const recurring = canMakeRecurring && makeRecurring;
+        const created = await addExpense(targetMonthId, {
+          ...values,
+          source: recurring ? 'recurring' : undefined,
+        });
+        if (recurring) {
+          await registerRecurringFromExpense(targetMonthId, created.id, {
+            description: values.description,
+            amount: values.amount,
+            category: values.category,
+            dayOfMonth: dayOfMonthOf(date),
+          });
+        }
+        const loggedMsg =
+          reimbursement > 0
+            ? `${money(net)} logged, ${money(reimbursement)} coming back`
+            : `${money(values.amount)} logged`;
+        const suffix = recurring ? ' · now recurring' : '';
         if (month && targetMonthId === monthId) {
           const spent = sumNet([...monthExpenses, { amount: values.amount, reimbursement }]);
           const remaining = round2(month.budgetTotal - spent);
           notify(
-            reimbursement > 0
-              ? `${money(net)} logged, ${money(reimbursement)} coming back`
-              : `${money(values.amount)} logged`,
+            loggedMsg + suffix,
             month.budgetTotal > 0
               ? {
                   detail:
@@ -176,7 +214,7 @@ export function ExpenseSheet({
         } else {
           // Landed in a different month than the one being viewed — say so,
           // since nothing else on screen will change to hint at it.
-          notify(`${money(net)} logged to ${monthLabel(targetMonthId, { year: false })}`);
+          notify(`${money(net)} logged to ${monthLabel(targetMonthId, { year: false })}${suffix}`);
         }
       }
       onClose();
@@ -290,6 +328,41 @@ export function ExpenseSheet({
             </span>
           </div>
         )}
+
+        {/*
+          Same tucked-away treatment as splitting: the common case is a one-off,
+          so "make this recurring" is an opt-in link. Turned on, this entry is
+          the first occurrence and the month won't nudge for it — the reminder
+          starts next month, on the day this one is dated.
+        */}
+        {canMakeRecurring &&
+          (!makeRecurring ? (
+            <button
+              type="button"
+              className="linkish"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => setMakeRecurring(true)}
+            >
+              + Make this recurring
+            </button>
+          ) : (
+            <div className="field">
+              <div className="row row--between">
+                <label className="field__label">Recurring monthly</label>
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => setMakeRecurring(false)}
+                >
+                  Remove
+                </button>
+              </div>
+              <span className="stat__note">
+                Logs now, then nudges you around the {ordinal(dayOfMonthOf(date))} of each
+                month. Edit or pause it in Settings.
+              </span>
+            </div>
+          ))}
 
         <Field label="Category">
           <div className="chiprow">

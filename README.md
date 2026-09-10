@@ -190,6 +190,24 @@ Either way, the version bump is the trigger — Supervisor doesn't poll for arbi
 for `version:` changes, so `npm run build:addon` (refresh `www/`) and a `version:` bump belong in
 the same commit whenever you ship a change meant to reach the running add-on.
 
+### The version bump is automatic
+
+A husky `post-commit` hook (`.husky/post-commit` → `scripts/bump-version.mjs`) reads each commit's
+[Conventional Commits](https://www.conventionalcommits.org) subject and bumps `version:` in both
+`budget-server/config.yaml` and `package.json`, folding the change into that same commit:
+
+| Commit subject | Bump |
+| --- | --- |
+| `feat: …` | minor |
+| `feat!: …` / `fix: …` with a `BREAKING CHANGE:` footer | major |
+| `fix: …`, `perf: …`, `chore: …`, `docs: …`, and every other conventional type | patch |
+| anything that isn't a conventional commit (`wip`, merge commits, …) | none |
+
+Rebases, merges, cherry-picks, reverts and `git commit --amend` never bump. The hook installs on
+`npm install` (via the `prepare` script); `npm test` covers its logic. To land a change without a
+bump, give it a non-conventional subject (`--no-verify` won't help — it skips `pre-commit` and
+`commit-msg`, not `post-commit`).
+
 ## Known limits (v1, by design)
 
 No accounts, no sync, no bank integration, no per-category caps, no fuzzy auto-matching. Data

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
+import { BulkExpenseSheet } from '../components/BulkExpenseSheet';
 import { ExpenseSheet } from '../components/ExpenseSheet';
-import { IconInbox, IconLink, IconRepeat, IconUpload } from '../components/Icons';
+import { IconInbox, IconLink, IconPlus, IconRepeat, IconUpload } from '../components/Icons';
 import {
   EmptyState,
   ExpenseAmount,
@@ -49,6 +50,7 @@ export function ExpensesScreen() {
     persist('expenseCategoryFilter', value);
   };
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [bulkAdding, setBulkAdding] = useState(false);
 
   const used = useMemo(() => {
     const ids = new Set(expenses.map((e) => e.category));
@@ -83,15 +85,25 @@ export function ExpensesScreen() {
             </span>
           </div>
         </div>
-        <Segmented
-          ariaLabel="Sort expenses"
-          value={sort}
-          onChange={setSort}
-          options={[
-            { value: 'date', label: 'By date' },
-            { value: 'amount', label: 'By amount' },
-          ]}
-        />
+        <div className="row" style={{ gap: 'var(--s-2)', flexWrap: 'wrap' }}>
+          {!locked && (
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={() => setBulkAdding(true)}
+            >
+              <IconPlus /> Add several
+            </button>
+          )}
+          <Segmented
+            ariaLabel="Sort expenses"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: 'date', label: 'By date' },
+              { value: 'amount', label: 'By amount' },
+            ]}
+          />
+        </div>
       </div>
 
       {used.length > 1 && (
@@ -173,6 +185,10 @@ export function ExpensesScreen() {
           allowDelete={!locked}
           onClose={() => setEditing(null)}
         />
+      )}
+
+      {bulkAdding && (
+        <BulkExpenseSheet monthId={activeMonthId} onClose={() => setBulkAdding(false)} />
       )}
     </div>
   );

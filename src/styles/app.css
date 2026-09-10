@@ -1097,3 +1097,73 @@ table.data tr:last-child td {
     font-size: 38px;
   }
 }
+
+/* ===================== Bulk expense entry ====================== */
+
+/* Each row is the single-expense form in miniature — stacked on mobile,
+   boxed so the eye can tell one receipt's fields from the next. */
+.bulkrow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+}
+
+.bulkrow + .bulkrow {
+  margin-top: var(--s-3);
+}
+
+.bulkrow__top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.bulkrow__top .amount-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bulkrow__remove {
+  flex: none;
+  padding: 7px;
+}
+
+/* A calmer amount field than the single sheet's headline input — a row of
+   these shouldn't shout. */
+.amount-input--sm {
+  padding: 8px 12px;
+}
+
+.amount-input--sm .amount-input__symbol {
+  font-size: 16px;
+}
+
+.amount-input--sm input {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+/* Count on the left, full-width save on the right; sticks to the bottom of
+   the sheet as the row list scrolls past it. */
+.bulkrow__actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  margin-top: var(--s-2);
+  background: linear-gradient(to bottom, transparent, var(--surface) var(--s-3));
+}
+
+.bulkrow__actions .stat__note {
+  flex: none;
+}
+
+.bulkrow__actions .btn {
+  flex: 1;
+}

@@ -15,9 +15,9 @@
  */
 
 import type { BankTransaction } from '../types/models';
-import { isValidISODate, pad2 } from './dates';
-import { newId } from './id';
-import { parseAmount, round2 } from './money';
+import { isValidISODate, pad2 } from './dates.ts';
+import { newId } from './id.ts';
+import { parseAmount, round2 } from './money.ts';
 
 export const CANONICAL_HEADERS = ['date', 'description', 'amount', 'category', 'notes'] as const;
 

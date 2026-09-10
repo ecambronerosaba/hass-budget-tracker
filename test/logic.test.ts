@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseAmount, round2, sumAmounts, formatMoney } from '../src/lib/money';
+import { parseAmount, round2, sumAmounts, formatMoney } from '../src/lib/money.ts';
 import {
   daysBetween,
   expectedDateFor,
@@ -9,7 +9,7 @@ import {
   monthIdOf,
   shiftMonth,
   ordinal,
-} from '../src/lib/dates';
+} from '../src/lib/dates.ts';
 import {
   buildImportPlan,
   detectDateFormat,
@@ -17,10 +17,10 @@ import {
   importTransactions,
   parseCsv,
   parseDateCell,
-} from '../src/lib/csv';
-import { autoMatch, reconciliationTotals, suggestCandidates } from '../src/lib/reconcile';
-import { clampReimbursement, netAmount, sumNet } from '../src/lib/expense';
-import { summarizeMonth, totalsByCategory, upcomingRecurring } from '../src/lib/projection';
+} from '../src/lib/csv.ts';
+import { autoMatch, reconciliationTotals, suggestCandidates } from '../src/lib/reconcile.ts';
+import { clampReimbursement, netAmount, sumNet } from '../src/lib/expense.ts';
+import { summarizeMonth, totalsByCategory, upcomingRecurring } from '../src/lib/projection.ts';
 import type { BankTransaction, Expense, Month, RecurringExpense } from '../src/types/models';
 
 /* ------------------------------- money -------------------------------- */

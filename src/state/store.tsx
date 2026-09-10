@@ -107,6 +107,14 @@ export interface AppStore extends AppData {
 
   setBudget: (monthId: MonthId, amount: number) => Promise<void>;
   addExpense: (monthId: MonthId, input: ExpenseInput) => Promise<Expense>;
+  /**
+   * Persist several expenses in order. Resolves with the prefix that made it
+   * to storage (`created`) and the error that stopped the rest, if any — it
+   * does not throw on a partial write.
+   */
+  addExpenses: (
+    items: { monthId: MonthId; input: ExpenseInput }[],
+  ) => Promise<{ created: Expense[]; error: unknown }>;
   updateExpense: (id: string, patch: Partial<ExpenseInput>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -175,6 +183,29 @@ function makeMonth(id: MonthId): Month {
     budgetHistory: [],
     recurringExpenseConfirmations: [],
     createdAt: new Date().toISOString(),
+  };
+}
+
+/** Turn a form/import payload into a storable Expense. Shared by the single
+ *  and bulk add paths so the two can't drift on defaults or normalisation. */
+function buildExpense(monthId: MonthId, input: ExpenseInput): Expense {
+  const now = new Date().toISOString();
+  const amount = round2(input.amount);
+  const reimbursement = clampReimbursement(amount, input.reimbursement ?? 0);
+  return {
+    id: newId('exp'),
+    monthId,
+    date: input.date,
+    amount,
+    reimbursement: reimbursement > 0 ? reimbursement : undefined,
+    category: input.category || FALLBACK_CATEGORY_ID,
+    description: input.description.trim(),
+    notes: input.notes?.trim() || undefined,
+    source: input.source ?? 'manual',
+    reconciliationStatus: input.reconciliationStatus ?? 'unreconciled',
+    matchedTransactionId: input.matchedTransactionId,
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -420,29 +451,53 @@ export function AppProvider({
   const addExpense = useCallback<AppStore['addExpense']>(
     async (monthId, input) => {
       await ensureMonth(monthId);
-      const now = new Date().toISOString();
-      const amount = round2(input.amount);
-      const reimbursement = clampReimbursement(amount, input.reimbursement ?? 0);
-      const expense: Expense = {
-        id: newId('exp'),
-        monthId,
-        date: input.date,
-        amount,
-        reimbursement: reimbursement > 0 ? reimbursement : undefined,
-        category: input.category || FALLBACK_CATEGORY_ID,
-        description: input.description.trim(),
-        notes: input.notes?.trim() || undefined,
-        source: input.source ?? 'manual',
-        reconciliationStatus: input.reconciliationStatus ?? 'unreconciled',
-        matchedTransactionId: input.matchedTransactionId,
-        createdAt: now,
-        updatedAt: now,
-      };
+      const expense = buildExpense(monthId, input);
       await repo().saveExpense(expense);
       const settings = await repo().getSettings();
       await repo().saveSettings({ ...settings, lastUsedCategory: expense.category });
       await reload();
       return expense;
+    },
+    [ensureMonth, reload],
+  );
+
+  /**
+   * Log a batch of expenses in one pass (the bulk-entry sheet). Rows are
+   * written one at a time in order; `created` is exactly the prefix that
+   * persisted, so a caller that hit `error` knows which rows to drop and which
+   * to leave for a retry — a retry can't double-log, because the row that
+   * threw never reached storage. The settings touch and the single `reload`
+   * happen once at the end rather than once per row.
+   */
+  const addExpenses = useCallback<AppStore['addExpenses']>(
+    async (items) => {
+      const created: Expense[] = [];
+      let failure: unknown = null;
+      try {
+        for (const monthId of new Set(items.map((i) => i.monthId))) {
+          await ensureMonth(monthId);
+        }
+        for (const { monthId, input } of items) {
+          const expense = buildExpense(monthId, input);
+          await repo().saveExpense(expense);
+          created.push(expense);
+        }
+      } catch (err) {
+        failure = err;
+      }
+      if (created.length > 0) {
+        try {
+          const settings = await repo().getSettings();
+          await repo().saveSettings({
+            ...settings,
+            lastUsedCategory: created[created.length - 1].category,
+          });
+        } catch {
+          // The expenses are saved; a stale last-used category is cosmetic.
+        }
+      }
+      await reload();
+      return { created, error: failure };
     },
     [ensureMonth, reload],
   );
@@ -847,6 +902,7 @@ export function AppProvider({
       dismissToast,
       setBudget,
       addExpense,
+      addExpenses,
       updateExpense,
       deleteExpense,
       saveCategory,
@@ -872,7 +928,7 @@ export function AppProvider({
     [
       data, status, error, durable, storageLocation, activeMonthId, preferences, setPreference, isLocked,
       unresolvedCounts, toasts, notify, dismissToast,
-      setBudget, addExpense, updateExpense, deleteExpense, saveCategory, createCategory,
+      setBudget, addExpense, addExpenses, updateExpense, deleteExpense, saveCategory, createCategory,
       saveRecurring, createRecurring, deleteRecurring, confirmRecurring, snoozeRecurring,
       skipRecurring, registerRecurringFromExpense, startReconciliation, setReconcileStage, linkTransaction,
       addExpenseFromTransaction, resolveLoggedOnly, finishReconciliation,

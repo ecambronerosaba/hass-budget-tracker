@@ -21,9 +21,9 @@ import {
   monthElapsedFraction,
   splitMonthId,
   today,
-} from './dates';
-import { round2, sumAmounts } from './money';
-import { netAmount, sumGross, sumNet } from './expense';
+} from './dates.ts';
+import { round2, sumAmounts } from './money.ts';
+import { netAmount, sumGross, sumNet } from './expense.ts';
 
 export type PaceTone = 'good' | 'info' | 'over';
 

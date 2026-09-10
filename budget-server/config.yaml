@@ -13,4 +13,5 @@ boot: auto
 panel_title: "Budget"
 ingress: true
 ingress_port: 8099
+ingress_require_admin: false
 panel_icon: mdi:wallet-outline

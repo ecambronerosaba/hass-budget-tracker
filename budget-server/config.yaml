@@ -1,7 +1,7 @@
 name: "Budget Tracker"
 description: "Serves the Budget Tracker single-page app and its JSON budget document, behind Home Assistant Ingress. No configuration required."
 slug: "budget_server"
-version: "1.2.0"
+version: "1.2.1"
 arch:
   - aarch64
   - amd64

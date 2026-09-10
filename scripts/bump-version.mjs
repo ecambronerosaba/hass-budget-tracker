@@ -68,9 +68,13 @@ export function nextVersion(version, level) {
   return `${major}.${minor}.${patch}`;
 }
 
-function reasonToSkip(message) {
-  if (process.env.BT_BUMP_IN_PROGRESS) return 'bump already in progress';
-  const action = process.env.GIT_REFLOG_ACTION ?? '';
+/**
+ * Why this commit should be left alone, or `null` to bump it. `env` is a seam
+ * for tests — `main()` passes the real `process.env`.
+ */
+export function reasonToSkip(message, env = process.env) {
+  if (env.BT_BUMP_IN_PROGRESS) return 'bump already in progress';
+  const action = env.GIT_REFLOG_ACTION ?? '';
   if (/\b(amend|rebase|merge|cherry-pick|revert)\b/.test(action)) {
     return `git action "${action}"`;
   }
@@ -113,13 +117,33 @@ function main() {
       .replace(/^(\s*)"version":\s*"[^"]+"/m, `$1"version": "${updated}"`),
   );
 
+  const paths = ['budget-server/config.yaml', 'package.json'];
   const git = (args) => execFileSync('git', args, {
     cwd: ROOT,
     stdio: 'inherit',
     env: { ...process.env, BT_BUMP_IN_PROGRESS: '1' },
   });
-  git(['add', 'budget-server/config.yaml', 'package.json']);
-  git(['commit', '--amend', '--no-edit', '--no-verify']);
+  try {
+    // --only: fold ONLY these two files' working-tree changes into the commit.
+    // Whatever else the developer had staged (a partial commit, an unrelated
+    // `git add`) stays staged and out of the amend.
+    git(['commit', '--amend', '--no-edit', '--no-verify', '--only', '--', ...paths]);
+  } catch (err) {
+    // git ignores a post-commit hook's exit code, so a failed amend (commit
+    // signing with no TTY, say) would otherwise leave the bump half-applied
+    // and staged with no signal. Put the files back and say what happened.
+    try {
+      git(['checkout', 'HEAD', '--', ...paths]);
+    } catch {
+      /* best effort — the message below still tells the developer to look */
+    }
+    process.stderr.write(
+      `bump-version: could not fold the ${version} → ${updated} bump into HEAD ` +
+        `(${err instanceof Error ? err.message : String(err)}); files restored. ` +
+        `Bump manually if the commit needs it.\n`,
+    );
+    return;
+  }
 
   process.stderr.write(`↑ version ${version} → ${updated} (${level})\n`);
 }

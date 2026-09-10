@@ -154,9 +154,10 @@ export function ExpenseSheet({
   const crossesMonth = !expense && targetMonthId !== monthId;
 
   // Only offered on the plain "log an expense" path — not when editing an
-  // existing row, and not when a caller (reconciliation, the recurring "log a
-  // different amount" sheet) has taken over saving.
-  const canMakeRecurring = !expense && !onSave && !locked;
+  // existing row, not when a caller (reconciliation, the recurring "log a
+  // different amount" sheet) has taken over saving, and not when the date
+  // field points the entry at a closed month.
+  const canMakeRecurring = !expense && !onSave && !isLocked(targetMonthId);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -183,20 +184,31 @@ export function ExpenseSheet({
           ...values,
           source: recurring ? 'recurring' : undefined,
         });
+        // The expense is logged at this point. If turning it into a template
+        // fails, don't strand the sheet open — report it and still close, so a
+        // retry doesn't log a second expense.
+        let recurringRegistered = false;
         if (recurring) {
-          await registerRecurringFromExpense(targetMonthId, created.id, {
-            description: values.description,
-            amount: values.amount,
-            category: values.category,
-            dayOfMonth: dayOfMonthOf(date),
-          });
+          try {
+            await registerRecurringFromExpense(targetMonthId, created.id, {
+              description: values.description,
+              amount: values.amount,
+              category: values.category,
+              dayOfMonth: dayOfMonthOf(date),
+            });
+            recurringRegistered = true;
+          } catch {
+            notify("Logged, but couldn't set it up as recurring", { tone: 'over' });
+          }
         }
         const loggedMsg =
           reimbursement > 0
             ? `${money(net)} logged, ${money(reimbursement)} coming back`
             : `${money(values.amount)} logged`;
-        const suffix = recurring ? ' · now recurring' : '';
-        if (month && targetMonthId === monthId) {
+        const suffix = recurringRegistered ? ' · now recurring' : '';
+        if (recurring && !recurringRegistered) {
+          // The failure toast above is the message; skip the routine one.
+        } else if (month && targetMonthId === monthId) {
           const spent = sumNet([...monthExpenses, { amount: values.amount, reimbursement }]);
           const remaining = round2(month.budgetTotal - spent);
           notify(
@@ -348,7 +360,7 @@ export function ExpenseSheet({
           ) : (
             <div className="field">
               <div className="row row--between">
-                <label className="field__label">Recurring monthly</label>
+                <span className="field__label">Recurring monthly</span>
                 <button
                   type="button"
                   className="linkish"

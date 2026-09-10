@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bumpLevel, nextVersion } from '../bump-version.mjs';
+import { bumpLevel, nextVersion, reasonToSkip } from '../bump-version.mjs';
 
 test('bumpLevel: feat is a minor bump', () => {
   assert.equal(bumpLevel('feat: add reconcile screen'), 'minor');
@@ -68,4 +68,40 @@ test('nextVersion: tolerates surrounding whitespace', () => {
 test('nextVersion: rejects a non-x.y.z version', () => {
   assert.throws(() => nextVersion('1.0', 'patch'), /Unparseable/);
   assert.throws(() => nextVersion('v1.0.0', 'patch'), /Unparseable/);
+});
+
+const CLEAN = { GIT_REFLOG_ACTION: 'commit' };
+
+test('reasonToSkip: the recursion flag wins over everything', () => {
+  assert.ok(reasonToSkip('feat: x', { ...CLEAN, BT_BUMP_IN_PROGRESS: '1' }));
+});
+
+test('reasonToSkip: git-driven history rewrites are skipped', () => {
+  for (const action of [
+    'commit (amend)',
+    'rebase -i (pick)',
+    'rebase (continue)',
+    'rebase (finish)',
+    'merge feature/x',
+    'cherry-pick',
+    'revert',
+  ]) {
+    assert.ok(reasonToSkip('feat: x', { GIT_REFLOG_ACTION: action }), action);
+  }
+});
+
+test('reasonToSkip: a plain commit with a non-conventional subject is skipped', () => {
+  assert.ok(reasonToSkip('wip', CLEAN));
+  assert.ok(reasonToSkip("Merge branch 'main' into feature/x", CLEAN));
+  assert.ok(reasonToSkip('deploy: not a real type', CLEAN));
+});
+
+test('reasonToSkip: a plain conventional commit is not skipped', () => {
+  assert.equal(reasonToSkip('feat: add a thing', CLEAN), null);
+  assert.equal(reasonToSkip('fix(scope): correct a thing', CLEAN), null);
+  assert.equal(reasonToSkip('chore: housekeeping', CLEAN), null);
+});
+
+test('reasonToSkip: a missing GIT_REFLOG_ACTION does not itself skip', () => {
+  assert.equal(reasonToSkip('feat: x', {}), null);
 });

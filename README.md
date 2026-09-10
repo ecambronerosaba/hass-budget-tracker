@@ -203,9 +203,11 @@ A husky `post-commit` hook (`.husky/post-commit` → `scripts/bump-version.mjs`)
 | `fix: …`, `perf: …`, `chore: …`, `docs: …`, and every other conventional type | patch |
 | anything that isn't a conventional commit (`wip`, merge commits, …) | none |
 
-Rebases, merges, cherry-picks, reverts and `git commit --amend` never bump. The hook installs on
-`npm install` (via the `prepare` script); `npm test` covers its logic. To land a change without a
-bump, give it a non-conventional subject (`--no-verify` won't help — it skips `pre-commit` and
+History rewrites never bump — rebase, merge, cherry-pick, `git revert`, and `git commit --amend`
+are all skipped (detected via `GIT_REFLOG_ACTION`). Note that a hand-written `revert:` subject on
+an ordinary commit still patch-bumps; only `git revert`'s own action is exempt. The hook installs
+on `npm install` (via the `prepare` script); `npm test` covers its logic. To land a change without
+a bump, give it a non-conventional subject (`--no-verify` won't help — it skips `pre-commit` and
 `commit-msg`, not `post-commit`).
 
 ## Known limits (v1, by design)

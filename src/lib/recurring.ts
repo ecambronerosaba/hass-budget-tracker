@@ -33,6 +33,9 @@ export function resolveRecurringFromExpense(
 ): RecurringResolution {
   const key = normalize(draft.description);
   const match = existing.find((r) => r.active && normalize(r.description) === key);
+  // Reuse as-is: the existing template's amount and day-of-month may have been
+  // set deliberately in Settings, so a freshly logged occurrence doesn't
+  // overwrite them.
   if (match) return { kind: 'reuse', id: match.id };
   return {
     kind: 'create',

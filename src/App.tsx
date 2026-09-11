@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Dashboard } from './screens/Dashboard';
 import { ExpensesScreen } from './screens/ExpensesScreen';
 import { ReconcileScreen } from './screens/ReconcileScreen';
@@ -16,6 +16,7 @@ import {
 } from './components/Icons';
 import { currentMonthId, monthLabel, shiftMonth } from './lib/dates';
 import { useApp, useMonth } from './state/store';
+import { useTheme } from './state/useTheme';
 
 export type Screen = 'dashboard' | 'expenses' | 'reconcile' | 'history' | 'settings';
 
@@ -28,14 +29,11 @@ const TABS: { id: Screen; label: string; Icon: typeof IconHome }[] = [
 ];
 
 export function App() {
-  const { status, error, activeMonthId, setActiveMonthId, settings } = useApp();
+  const { status, error, activeMonthId, setActiveMonthId } = useApp();
   const month = useMonth(activeMonthId);
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [adding, setAdding] = useState(false);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme;
-  }, [settings.theme]);
+  useTheme();
 
   if (status === 'loading') {
     return <div className="empty" style={{ paddingTop: '30vh' }}>Opening your budget…</div>;

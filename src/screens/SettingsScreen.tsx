@@ -6,9 +6,11 @@ import { parseAmount } from '../lib/money';
 import { IconDownload, IconInfo, IconRepeat, IconUpload } from '../components/Icons';
 import { Field, Money, SectionHeading, Sheet, useMoneyFormatter } from '../components/ui';
 import { useApp } from '../state/store';
+import { useTheme } from '../state/useTheme';
 
 export function SettingsScreen() {
-  const { categories, recurring, durable, storageLocation, settings, updateSettings } = useApp();
+  const { categories, recurring, durable, storageLocation } = useApp();
+  const { pref: theme, setPref: setTheme } = useTheme();
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null);
   const [editingRecurring, setEditingRecurring] = useState<RecurringExpense | 'new' | null>(null);
 
@@ -122,16 +124,13 @@ export function SettingsScreen() {
         <div className="row row--between">
           <span style={{ fontSize: 'var(--t-small)' }}>Theme</span>
           <div className="segmented" role="group" aria-label="Theme">
-            <button
-              aria-pressed={settings.theme === 'dark'}
-              onClick={() => updateSettings({ theme: 'dark' })}
-            >
+            <button aria-pressed={theme === 'system'} onClick={() => setTheme('system')}>
+              System
+            </button>
+            <button aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>
               Dark
             </button>
-            <button
-              aria-pressed={settings.theme === 'light'}
-              onClick={() => updateSettings({ theme: 'light' })}
-            >
+            <button aria-pressed={theme === 'light'} onClick={() => setTheme('light')}>
               Light
             </button>
           </div>
@@ -140,7 +139,7 @@ export function SettingsScreen() {
 
       <p className="dim" style={{ fontSize: 'var(--t-micro)', textAlign: 'center' }}>
         {storageLocation === 'server'
-          ? 'Shared on this Home Assistant — every device that opens it here sees the same budget. No account, no analytics.'
+          ? 'Shared on this Home Assistant — every device that opens it here sees the same budget. Theme is set per device. No account, no analytics.'
           : 'Everything stays on this device. No account, no sync, no analytics.'}
       </p>
 

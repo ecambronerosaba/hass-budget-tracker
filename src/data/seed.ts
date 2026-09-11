@@ -28,5 +28,4 @@ export const CATEGORY_PALETTE = [
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'settings',
   currency: 'USD',
-  theme: 'dark',
 };

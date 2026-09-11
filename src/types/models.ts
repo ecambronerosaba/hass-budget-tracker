@@ -179,12 +179,16 @@ export const DEFAULT_PREFERENCES: Preferences = {
   importMappings: {},
 };
 
+/**
+ * Theme is deliberately not here — it's a display preference per browser
+ * (src/lib/theme.ts, localStorage), not budget data, so it's never shared
+ * through the server-backed repository the way the rest of this is.
+ */
 export interface AppSettings {
   id: 'settings';
   currency: string;
   /** Category id preselected in the quick-add form. */
   lastUsedCategory?: string;
-  theme: 'dark' | 'light';
   preferences?: Preferences;
 }
 

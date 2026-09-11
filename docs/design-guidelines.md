@@ -37,9 +37,12 @@ From the header comment of `src/styles/tokens.css:1` and the README design notes
 
 All tokens are CSS custom properties defined on `:root` / `:root[data-theme='dark']` and overridden on
 `:root[data-theme='light']` in `src/styles/tokens.css`. The theme is always set explicitly on
-`<html data-theme>` from `settings.theme` (`src/App.tsx:37`; default `'dark'`, `src/data/seed.ts`). There is
-no `@media (prefers-color-scheme)` block — the only media queries in tokens are reduced-motion, and the 420 /
-640 layout breakpoints in `app.css`.
+`<html data-theme>`, resolved from a per-browser preference (System / Dark / Light) in `src/lib/theme.ts` +
+`src/state/useTheme.ts` — `localStorage`, never `AppSettings`, so it's never shared through the server-backed
+repository the way the budget itself is. Default preference is `'system'`. There is no `@media
+(prefers-color-scheme)` block in `tokens.css` itself — that resolution happens in JS (and, to avoid a flash
+before the bundle loads, a duplicate of it inline in `index.html`) — the only media queries in tokens are
+reduced-motion, and the 420 / 640 layout breakpoints in `app.css`.
 
 Radii, spacing, the type scale, fonts, `--ease` and `--dur` are declared once on `:root` and shared by both
 themes. Only surfaces, text, accents, `--track` and the two shadows change between light and dark.

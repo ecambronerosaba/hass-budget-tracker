@@ -19,7 +19,10 @@ import type {
   Preferences,
   BackupFile,
   BankTransaction,
+  BudgetEvent,
   Category,
+  EventKind,
+  EventPhase,
   Expense,
   ExpenseSource,
   ISODate,
@@ -29,8 +32,16 @@ import type {
   ReconciliationSession,
   RecurringExpense,
 } from '../types/models';
-import { addDays, currentMonthId, expectedDateFor, splitMonthId, today } from '../lib/dates';
+import {
+  addDays,
+  currentMonthId,
+  expectedDateFor,
+  monthLabel,
+  splitMonthId,
+  today,
+} from '../lib/dates';
 import { clampReimbursement } from '../lib/expense';
+import { summarizeEvent, type EventSummary } from '../lib/event';
 import { newId } from '../lib/id';
 import { round2 } from '../lib/money';
 import { autoMatch } from '../lib/reconcile';
@@ -59,6 +70,20 @@ export interface ExpenseInput {
   source?: ExpenseSource;
   reconciliationStatus?: Expense['reconciliationStatus'];
   matchedTransactionId?: string;
+  /** Tags this expense into an event's ledger. */
+  eventId?: string;
+  eventKind?: EventKind;
+}
+
+export interface EventInput {
+  name: string;
+  targetAmount: number;
+  category: string;
+  phase?: EventPhase;
+  startDate?: ISODate;
+  endDate?: ISODate;
+  monthlyContribution?: number;
+  note?: string;
 }
 
 /** Where the active repository actually keeps its data — for the honest line
@@ -72,6 +97,7 @@ interface AppData {
   months: Month[];
   expenses: Expense[];
   recurring: RecurringExpense[];
+  events: BudgetEvent[];
   sessions: ReconciliationSession[];
 }
 
@@ -81,6 +107,7 @@ const EMPTY: AppData = {
   months: [],
   expenses: [],
   recurring: [],
+  events: [],
   sessions: [],
 };
 
@@ -141,6 +168,20 @@ export interface AppStore extends AppData {
     expenseId: string,
     draft: RecurringTemplateDraft,
   ) => Promise<void>;
+
+  createEvent: (input: EventInput) => Promise<BudgetEvent>;
+  updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>;
+  setEventPhase: (id: string, phase: EventPhase) => Promise<void>;
+  /**
+   * Only when the event has no entries. With entries, untagging them would
+   * silently change the totals of months that may already be closed, and
+   * deleting them would destroy reconciled history — so the answer is Close.
+   */
+  deleteEvent: (id: string) => Promise<void>;
+  /** Logs a contribution covering what the fund didn't, into `monthId`. */
+  coverFromMonth: (eventId: string, monthId: MonthId, amount: number) => Promise<void>;
+  /** The event's own ledger — contributions and spending alike. */
+  eventExpenses: (eventId: string) => Expense[];
 
   startReconciliation: (
     monthId: MonthId,
@@ -204,9 +245,23 @@ function buildExpense(monthId: MonthId, input: ExpenseInput): Expense {
     source: input.source ?? 'manual',
     reconciliationStatus: input.reconciliationStatus ?? 'unreconciled',
     matchedTransactionId: input.matchedTransactionId,
+    eventId: input.eventId,
+    // An eventKind with no event would silently take an ordinary expense out
+    // of its month's budget, so the pair is only ever set together.
+    eventKind: input.eventId ? input.eventKind ?? 'spend' : undefined,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** Same pairing rule as `buildExpense`, applied to a partial edit. */
+function normalizedEventKind(
+  existing: Expense,
+  patch: Partial<ExpenseInput>,
+): Expense['eventKind'] {
+  const eventId = patch.eventId !== undefined ? patch.eventId : existing.eventId;
+  if (!eventId) return undefined;
+  return patch.eventKind ?? existing.eventKind ?? 'spend';
 }
 
 /**
@@ -295,17 +350,18 @@ export function AppProvider({
   const reload = useCallback(async () => {
     const repo = repoRef.current;
     if (!repo) return;
-    const [settings, categories, months, expenses, recurring] = await Promise.all([
+    const [settings, categories, months, expenses, recurring, events] = await Promise.all([
       repo.getSettings(),
       repo.listCategories(),
       repo.listMonths(),
       repo.listExpenses(),
       repo.listRecurring(),
+      repo.listEvents(),
     ]);
     const sessions = (
       await Promise.all(months.map((m) => repo.getSession(m.id)))
     ).filter((s): s is ReconciliationSession => s !== null);
-    setData({ settings, categories, months, expenses, recurring, sessions });
+    setData({ settings, categories, months, expenses, recurring, events, sessions });
   }, []);
 
   useEffect(() => {
@@ -523,6 +579,7 @@ export function AppProvider({
         description: patch.description?.trim() ?? existing.description,
         notes: patch.notes !== undefined ? patch.notes.trim() || undefined : existing.notes,
         monthId: patch.date ? patch.date.slice(0, 7) : existing.monthId,
+        eventKind: normalizedEventKind(existing, patch),
         updatedAt: new Date().toISOString(),
       };
       if (next.monthId !== existing.monthId) await ensureMonth(next.monthId);
@@ -697,6 +754,128 @@ export function AppProvider({
       await reload();
     },
     [data.recurring, recordConfirmation, reload],
+  );
+
+  /* ------------------------------ events ------------------------------- */
+
+  const createEvent = useCallback<AppStore['createEvent']>(
+    async (input) => {
+      const now = new Date().toISOString();
+      const event: BudgetEvent = {
+        id: newId('evt'),
+        name: input.name.trim(),
+        targetAmount: round2(input.targetAmount),
+        phase: input.phase ?? 'saving',
+        startDate: input.startDate || undefined,
+        endDate: input.endDate || undefined,
+        monthlyContribution: round2(input.monthlyContribution ?? 0),
+        category: input.category || FALLBACK_CATEGORY_ID,
+        note: input.note?.trim() || undefined,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await repo().saveEvent(event);
+      await reload();
+      return event;
+    },
+    [reload],
+  );
+
+  const updateEvent = useCallback<AppStore['updateEvent']>(
+    async (id, patch) => {
+      const existing = data.events.find((e) => e.id === id);
+      if (!existing) return;
+      const next: BudgetEvent = {
+        ...existing,
+        ...patch,
+        name: patch.name?.trim() ?? existing.name,
+        targetAmount:
+          patch.targetAmount !== undefined ? round2(patch.targetAmount) : existing.targetAmount,
+        monthlyContribution:
+          patch.monthlyContribution !== undefined
+            ? round2(patch.monthlyContribution)
+            : existing.monthlyContribution,
+        startDate:
+          patch.startDate !== undefined ? patch.startDate || undefined : existing.startDate,
+        note: patch.note !== undefined ? patch.note.trim() || undefined : existing.note,
+        updatedAt: new Date().toISOString(),
+      };
+      await repo().saveEvent(next);
+      await reload();
+    },
+    [data.events, reload],
+  );
+
+  const setEventPhase = useCallback<AppStore['setEventPhase']>(
+    async (id, phase) => {
+      const existing = data.events.find((e) => e.id === id);
+      if (!existing) return;
+      await repo().saveEvent({
+        ...existing,
+        phase,
+        closedAt: phase === 'closed' ? new Date().toISOString() : undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      await reload();
+    },
+    [data.events, reload],
+  );
+
+  /**
+   * Deleting an event that has entries has no good answer: untagging them
+   * would silently change the totals of months that may already be closed,
+   * and deleting them would destroy reconciled history. So it isn't offered —
+   * and the guard lives here rather than in the sheet, because a screen that
+   * forgets is a screen that lets it happen.
+   */
+  const deleteEvent = useCallback<AppStore['deleteEvent']>(
+    async (id) => {
+      const tagged = data.expenses.filter((e) => e.eventId === id);
+      if (tagged.length > 0) {
+        notify('This event has entries', {
+          detail: `${tagged.length} ${
+            tagged.length === 1 ? 'entry is' : 'entries are'
+          } logged against it. Close it instead.`,
+        });
+        return;
+      }
+      await repo().deleteEvent(id);
+      await reload();
+    },
+    [data.expenses, notify, reload],
+  );
+
+  /**
+   * Spending past the fund isn't silently absorbed — it becomes a contribution
+   * the user chooses to make, so the money reaches a month's budget exactly
+   * once and only when they say so.
+   */
+  const coverFromMonth = useCallback<AppStore['coverFromMonth']>(
+    async (eventId, monthId, amount) => {
+      const event = data.events.find((e) => e.id === eventId);
+      if (!event || amount <= 0) return;
+      if (isLocked(monthId)) {
+        notify('That month is closed', { detail: 'Nothing new can be logged to it.' });
+        return;
+      }
+      await addExpense(monthId, {
+        date: monthId === currentMonthId() ? today() : expectedDateFor(monthId, 31),
+        amount: round2(amount),
+        category: event.category,
+        description: `${event.name} fund`,
+        eventId: event.id,
+        eventKind: 'contribution',
+      });
+      notify(`${event.name} fund topped up`, {
+        detail: `Counted against ${monthLabel(monthId, { year: false })}.`,
+      });
+    },
+    [addExpense, data.events, isLocked, notify],
+  );
+
+  const eventExpenses = useCallback<AppStore['eventExpenses']>(
+    (eventId) => data.expenses.filter((e) => e.eventId === eventId),
+    [data.expenses],
   );
 
   /* -------------------------- reconciliation --------------------------- */
@@ -914,6 +1093,12 @@ export function AppProvider({
       snoozeRecurring,
       skipRecurring,
       registerRecurringFromExpense,
+      createEvent,
+      updateEvent,
+      setEventPhase,
+      deleteEvent,
+      coverFromMonth,
+      eventExpenses,
       startReconciliation,
       setReconcileStage,
       linkTransaction,
@@ -930,7 +1115,9 @@ export function AppProvider({
       unresolvedCounts, toasts, notify, dismissToast,
       setBudget, addExpense, addExpenses, updateExpense, deleteExpense, saveCategory, createCategory,
       saveRecurring, createRecurring, deleteRecurring, confirmRecurring, snoozeRecurring,
-      skipRecurring, registerRecurringFromExpense, startReconciliation, setReconcileStage, linkTransaction,
+      skipRecurring, registerRecurringFromExpense,
+      createEvent, updateEvent, setEventPhase, deleteEvent, coverFromMonth, eventExpenses,
+      startReconciliation, setReconcileStage, linkTransaction,
       addExpenseFromTransaction, resolveLoggedOnly, finishReconciliation,
       cancelReconciliation, updateSettings, exportBackup, importBackup,
     ],
@@ -966,6 +1153,28 @@ export function useSession(monthId: MonthId): ReconciliationSession | null {
     () => sessions.find((s) => s.monthId === monthId) ?? null,
     [sessions, monthId],
   );
+}
+
+export function useEvent(eventId: string): BudgetEvent | null {
+  const { events } = useApp();
+  return useMemo(() => events.find((e) => e.id === eventId) ?? null, [events, eventId]);
+}
+
+export function useEventExpenses(eventId: string): Expense[] {
+  const { expenses } = useApp();
+  return useMemo(
+    () =>
+      expenses
+        .filter((e) => e.eventId === eventId)
+        .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)),
+    [expenses, eventId],
+  );
+}
+
+export function useEventSummary(eventId: string): EventSummary | null {
+  const event = useEvent(eventId);
+  const expenses = useEventExpenses(eventId);
+  return useMemo(() => (event ? summarizeEvent({ event, expenses }) : null), [event, expenses]);
 }
 
 export function useCategoryMap(): Map<string, Category> {

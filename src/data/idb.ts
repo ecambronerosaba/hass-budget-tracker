@@ -5,11 +5,12 @@ export type StoreName =
   | 'expenses'
   | 'categories'
   | 'recurring'
+  | 'events'
   | 'sessions'
   | 'settings';
 
 const DB_NAME = 'budget-tracker';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -35,6 +36,9 @@ export function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('recurring')) {
         db.createObjectStore('recurring', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('events')) {
+        db.createObjectStore('events', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('sessions')) {
         db.createObjectStore('sessions', { keyPath: 'monthId' });

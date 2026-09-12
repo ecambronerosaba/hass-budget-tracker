@@ -2,6 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
+  BudgetEvent,
   Category,
   Expense,
   Month,
@@ -90,6 +91,20 @@ export class IndexedDbRepository implements BudgetRepository {
     await idb.remove('recurring', id);
   }
 
+  async listEvents(): Promise<BudgetEvent[]> {
+    const events = await idb.getAll<BudgetEvent>('events');
+    // Newest first — an event you just made is the one you're about to use.
+    return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async saveEvent(event: BudgetEvent): Promise<void> {
+    await idb.put('events', event);
+  }
+
+  async deleteEvent(id: string): Promise<void> {
+    await idb.remove('events', id);
+  }
+
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
     return idb.get<ReconciliationSession>('sessions', monthId);
   }
@@ -103,29 +118,40 @@ export class IndexedDbRepository implements BudgetRepository {
   }
 
   async exportAll(): Promise<BackupFile> {
-    const [months, expenses, categories, recurring, sessions, settings] = await Promise.all([
-      idb.getAll<Month>('months'),
-      idb.getAll<Expense>('expenses'),
-      idb.getAll<Category>('categories'),
-      idb.getAll<RecurringExpense>('recurring'),
-      idb.getAll<ReconciliationSession>('sessions'),
-      this.getSettings(),
-    ]);
+    const [months, expenses, categories, recurring, events, sessions, settings] =
+      await Promise.all([
+        idb.getAll<Month>('months'),
+        idb.getAll<Expense>('expenses'),
+        idb.getAll<Category>('categories'),
+        idb.getAll<RecurringExpense>('recurring'),
+        idb.getAll<BudgetEvent>('events'),
+        idb.getAll<ReconciliationSession>('sessions'),
+        this.getSettings(),
+      ]);
     return {
       format: 'budget-tracker-backup',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       months,
       expenses,
       categories,
       recurring,
+      events,
       sessions,
       settings,
     };
   }
 
   async importAll(backup: BackupFile): Promise<void> {
-    await idb.clearStores(['months', 'expenses', 'categories', 'recurring', 'sessions', 'settings']);
+    await idb.clearStores([
+      'months',
+      'expenses',
+      'categories',
+      'recurring',
+      'events',
+      'sessions',
+      'settings',
+    ]);
     await Promise.all([
       idb.putMany('months', backup.months ?? []),
       idb.putMany('expenses', backup.expenses ?? []),
@@ -134,6 +160,8 @@ export class IndexedDbRepository implements BudgetRepository {
         backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES,
       ),
       idb.putMany('recurring', backup.recurring ?? []),
+      // `?? []` throughout: a v1 backup predates events and simply has none.
+      idb.putMany('events', backup.events ?? []),
       idb.putMany('sessions', backup.sessions ?? []),
       idb.put('settings', backup.settings ?? DEFAULT_SETTINGS),
     ]);

@@ -44,6 +44,10 @@ function emptyData() {
     expenses: [],
     categories: [],
     recurring: [],
+    // Not in DATA_KEYS on purpose: requiring a seventh key would 400 a PUT
+    // from a client built before event budgets. The document is stored
+    // verbatim either way, so the key round-trips without being validated.
+    events: [],
     sessions: [],
     settings: null,
   };

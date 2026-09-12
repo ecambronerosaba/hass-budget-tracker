@@ -21,6 +21,7 @@ import {
   useMoneyFormatter,
 } from '../components/ui';
 import { currentMonthId, formatDayLabel, monthLabel, today } from '../lib/dates';
+import { countsAgainstMonth, summarizeEvent } from '../lib/event';
 import { summarizeMonth } from '../lib/projection';
 import type { Expense } from '../types/models';
 import {
@@ -33,9 +34,9 @@ import {
 import type { Screen } from '../App';
 
 export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
-  const { activeMonthId, recurring, isLocked } = useApp();
+  const { activeMonthId, recurring, events, expenses: allExpenses, isLocked } = useApp();
   const month = useMonth(activeMonthId);
-  const expenses = useMonthExpenses(activeMonthId);
+  const monthExpenses = useMonthExpenses(activeMonthId);
   const session = useSession(activeMonthId);
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
@@ -43,9 +44,17 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
 
+  // The month's own spending. Event spending was budgeted in the month it was
+  // set aside, so it is not part of what this month cost, how it was split up,
+  // or what the "Recent" list is a recent slice of.
+  const expenses = useMemo(
+    () => monthExpenses.filter(countsAgainstMonth),
+    [monthExpenses],
+  );
+
   const summary = useMemo(
-    () => (month ? summarizeMonth({ month, expenses, recurring }) : null),
-    [month, expenses, recurring],
+    () => (month ? summarizeMonth({ month, expenses: monthExpenses, recurring, events }) : null),
+    [month, monthExpenses, recurring, events],
   );
 
   if (!month || !summary) {
@@ -234,7 +243,8 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
         </div>
       )}
 
-      {summary.upcoming.length > 0 && month.status === 'open' && (
+      {(summary.upcoming.length > 0 || summary.upcomingEvents.length > 0) &&
+        month.status === 'open' && (
         <section className="card">
           <SectionHeading title="Expected this month" />
           <p className="muted" style={{ fontSize: 'var(--t-small)', marginBottom: 'var(--s-4)' }}>
@@ -260,6 +270,85 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
                 </span>
               </div>
             ))}
+            {summary.upcomingEvents.map(({ event, amount }) => (
+              <div className="row row--between" key={event.id}>
+                <span className="row" style={{ gap: 'var(--s-2)', minWidth: 0 }}>
+                  <span
+                    className="dot"
+                    style={{
+                      background: categories.get(event.category)?.color ?? 'var(--text-tertiary)',
+                    }}
+                  />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {event.name} fund
+                  </span>
+                </span>
+                <span className="row" style={{ gap: 'var(--s-3)' }}>
+                  <span className="stat__note">to set aside</span>
+                  <Money amount={amount} compact />
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {events.some((e) => e.phase !== 'closed') && (
+        <section className="card card--flush">
+          <div className="row row--between" style={{ padding: 'var(--s-5) var(--s-5) var(--s-3)' }}>
+            <h2 className="section-label">Events</h2>
+            <button className="linkish" onClick={() => onNavigate('events')}>
+              See all
+            </button>
+          </div>
+          <div className="list">
+            {events
+              .filter((e) => e.phase !== 'closed')
+              .map((event) => {
+                // An event's fund spans months, so this reads the whole
+                // ledger rather than the month on screen.
+                const s = summarizeEvent({
+                  event,
+                  expenses: allExpenses.filter((x) => x.eventId === event.id),
+                });
+                return (
+                  <button
+                    className="list__item"
+                    key={event.id}
+                    onClick={() => onNavigate('events')}
+                  >
+                    <span
+                      className="dot"
+                      style={{
+                        background:
+                          categories.get(event.category)?.color ?? 'var(--text-tertiary)',
+                      }}
+                    />
+                    <span className="list__main">
+                      <span className="list__title">{event.name}</span>
+                      <span className="list__sub">
+                        <span>{event.phase === 'saving' ? 'Saving' : 'Spending'}</span>
+                        <span>·</span>
+                        <span>
+                          {money(s.saved)} of {money(s.target, { compact: true })}
+                        </span>
+                        {s.contributedThisMonth > 0 && (
+                          <>
+                            <span>·</span>
+                            <span>{money(s.contributedThisMonth)} this month</span>
+                          </>
+                        )}
+                      </span>
+                    </span>
+                    <span className="list__amount num">
+                      <Money
+                        amount={event.phase === 'saving' ? s.targetRemaining : s.fundRemaining}
+                        compact
+                      />
+                    </span>
+                  </button>
+                );
+              })}
           </div>
         </section>
       )}

@@ -52,7 +52,7 @@ export interface Month {
 
 export type ExpenseSource = 'manual' | 'recurring' | 'csv-added';
 
-export type EventKind = 'contribution' | 'spend';
+export type BucketKind = 'contribution' | 'spend';
 
 export type ReconciliationStatus =
   | 'unreconciled'
@@ -83,19 +83,19 @@ export interface Expense {
   reconciliationStatus: ReconciliationStatus;
   matchedTransactionId?: string;
   /**
-   * Set when this expense belongs to an event's ledger. There is deliberately
+   * Set when this expense belongs to a bucket's ledger. There is deliberately
    * no separate entry record: a contribution and a trip dinner are both money
    * that left the account, so they are expenses, and they reach the month's
    * ledger and reconciliation with no special case.
    */
-  eventId?: string;
+  bucketId?: string;
   /**
-   * Which side of the event's fund this is. Only meaningful with `eventId`.
+   * Which side of the bucket's fund this is. Only meaningful with `bucketId`.
    * `contribution` counts against its month like any expense — that is the
    * line item in the monthly budget. `spend` never counts against a month:
    * that money was already budgeted when it was saved.
    */
-  eventKind?: EventKind;
+  bucketKind?: BucketKind;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -139,19 +139,23 @@ export interface RecurringExpense {
 }
 
 /**
- * A budget that isn't a month: a trip, a wedding, a laptop. It owns a fund.
- * Money goes in (contributions) and later comes out (spending), and the phase
- * says which of those the user is doing right now.
+ * A budget that isn't a month: a trip, a wedding, new golf clubs. It owns a
+ * fund — money goes in (contributions) and later comes out (spending), and
+ * the phase says which of those the user is doing right now.
+ *
+ * Dates are optional and often absent: a trip has them, a thing you are
+ * saving up for usually doesn't. They are only used for the saving pace line
+ * and for claiming expenses dated inside the range (`bucketForDate`).
  */
-export type EventPhase = 'saving' | 'spending' | 'closed';
+export type BucketPhase = 'saving' | 'spending' | 'closed';
 
-export interface BudgetEvent {
+export interface Bucket {
   id: string;
   name: string;
   /** What the whole thing is planned to cost. */
   targetAmount: number;
-  phase: EventPhase;
-  /** When the event happens — optional, and what the saving pace is measured against. */
+  phase: BucketPhase;
+  /** When the bucket happens — optional, and what the saving pace is measured against. */
   startDate?: ISODate;
   endDate?: ISODate;
   /** Planned set-aside per month; 0 means "no plan, just a pot". */
@@ -237,14 +241,14 @@ export interface AppSettings {
 /** Shape of the JSON backup (§6, data durability). */
 export interface BackupFile {
   format: 'budget-tracker-backup';
-  /** 1 predates event budgets; 2 carries `events`. Both restore. */
-  version: 1 | 2;
+  /** 1 predates the feature; 2 called them events; 3 calls them buckets. All restore. */
+  version: 1 | 2 | 3;
   exportedAt: Timestamp;
   months: Month[];
   expenses: Expense[];
   categories: Category[];
   recurring: RecurringExpense[];
-  events: BudgetEvent[];
+  buckets: Bucket[];
   sessions: ReconciliationSession[];
   settings: AppSettings | null;
 }

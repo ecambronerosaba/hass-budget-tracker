@@ -1,37 +1,43 @@
 import { useState, type FormEvent } from 'react';
-import type { BudgetEvent } from '../types/models';
+import type { Bucket } from '../types/models';
 import { FALLBACK_CATEGORY_ID } from '../data/seed';
 import { parseAmount } from '../lib/money';
 import { useApp } from '../state/store';
 import { Field, Sheet, useMoneyFormatter } from './ui';
 
 /**
- * Create or edit an event. The common path is name → target → category →
- * save; a date and a monthly plan are real but secondary, so they sit behind
- * a disclosure rather than making every new event a six-field form.
+ * Create or edit a bucket. The common path is name → target → category →
+ * save; dates and a monthly plan are real but secondary, so they sit behind
+ * a disclosure rather than making every new bucket a six-field form.
  */
-export function EventSheet({
-  event,
+export function BucketSheet({
+  bucket,
   onClose,
   onCreated,
 }: {
-  event?: BudgetEvent;
+  bucket?: Bucket;
   onClose: () => void;
   onCreated?: (id: string) => void;
 }) {
-  const { categories, createEvent, updateEvent, deleteEvent, expenses, notify } = useApp();
+  const { categories, createBucket, updateBucket, deleteBucket, expenses, notify } = useApp();
   const money = useMoneyFormatter();
 
-  const [name, setName] = useState(event?.name ?? '');
-  const [targetText, setTargetText] = useState(event ? String(event.targetAmount) : '');
-  const [category, setCategory] = useState(event?.category ?? FALLBACK_CATEGORY_ID);
-  const [startDate, setStartDate] = useState(event?.startDate ?? '');
+  const [name, setName] = useState(bucket?.name ?? '');
+  const [targetText, setTargetText] = useState(bucket ? String(bucket.targetAmount) : '');
+  const [category, setCategory] = useState(bucket?.category ?? FALLBACK_CATEGORY_ID);
+  const [startDate, setStartDate] = useState(bucket?.startDate ?? '');
+  const [endDate, setEndDate] = useState(bucket?.endDate ?? '');
   const [monthlyText, setMonthlyText] = useState(
-    event && event.monthlyContribution > 0 ? String(event.monthlyContribution) : '',
+    bucket && bucket.monthlyContribution > 0 ? String(bucket.monthlyContribution) : '',
   );
-  const [note, setNote] = useState(event?.note ?? '');
+  const [note, setNote] = useState(bucket?.note ?? '');
   const [planOpen, setPlanOpen] = useState(
-    Boolean(event?.startDate || (event?.monthlyContribution ?? 0) > 0 || event?.note),
+    Boolean(
+      bucket?.startDate ||
+        bucket?.endDate ||
+        (bucket?.monthlyContribution ?? 0) > 0 ||
+        bucket?.note,
+    ),
   );
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -41,10 +47,11 @@ export function EventSheet({
   const targetValid = target !== null && target > 0;
   const nameValid = name.trim().length > 0;
   const monthly = planOpen ? parseAmount(monthlyText) ?? 0 : 0;
-  const valid = nameValid && targetValid;
+  const rangeReversed = Boolean(startDate && endDate && endDate < startDate);
+  const valid = nameValid && targetValid && !rangeReversed;
 
-  const entryCount = event ? expenses.filter((e) => e.eventId === event.id).length : 0;
-  const active = categories.filter((c) => !c.archived || c.id === event?.category);
+  const entryCount = bucket ? expenses.filter((e) => e.bucketId === bucket.id).length : 0;
+  const active = categories.filter((c) => !c.archived || c.id === bucket?.category);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -57,15 +64,16 @@ export function EventSheet({
         targetAmount: target as number,
         category,
         startDate: startDate || undefined,
+        endDate: endDate || undefined,
         monthlyContribution: Math.max(0, monthly),
         note: note.trim() || undefined,
       };
-      if (event) {
-        await updateEvent(event.id, values);
-        notify('Event updated');
+      if (bucket) {
+        await updateBucket(bucket.id, values);
+        notify('Bucket updated');
       } else {
-        const created = await createEvent(values);
-        notify('Event created', { detail: `${money(created.targetAmount)} target` });
+        const created = await createBucket(values);
+        notify('Bucket created', { detail: `${money(created.targetAmount)} target` });
         onCreated?.(created.id);
         return;
       }
@@ -76,15 +84,15 @@ export function EventSheet({
   };
 
   return (
-    <Sheet title={event ? 'Edit event' : 'New event'} onClose={onClose}>
+    <Sheet title={bucket ? 'Edit bucket' : 'New bucket'} onClose={onClose}>
       <form onSubmit={submit} className="stack" style={{ ['--gap' as string]: 'var(--s-4)' }}>
-        <Field label="Name" id="event-name">
+        <Field label="Name" id="bucket-name">
           <input
-            id="event-name"
+            id="bucket-name"
             className="input"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Japan trip"
+            placeholder="Golf clubs"
             autoComplete="off"
             aria-invalid={touched && !nameValid}
             // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -96,13 +104,13 @@ export function EventSheet({
         </Field>
 
         <div className="field">
-          <label className="field__label" htmlFor="event-target">
+          <label className="field__label" htmlFor="bucket-target">
             Target
           </label>
           <div className="amount-input">
             <span className="amount-input__symbol">$</span>
             <input
-              id="event-target"
+              id="bucket-target"
               value={targetText}
               onChange={(e) => setTargetText(e.target.value)}
               inputMode="decimal"
@@ -136,9 +144,9 @@ export function EventSheet({
         </Field>
 
         {/*
-          Same progressive disclosure as the expense form: most events are a
-          name, a number and a category. A date and a monthly plan are worth
-          having, but not worth making every event ask for.
+          Same progressive disclosure as the expense form: most buckets are a
+          name, a number and a category. Dates and a monthly plan are worth
+          having, but not worth making every bucket ask for.
         */}
         {!planOpen ? (
           <button
@@ -147,17 +155,17 @@ export function EventSheet({
             style={{ alignSelf: 'flex-start' }}
             onClick={() => setPlanOpen(true)}
           >
-            + Add a date and a monthly plan
+            + Add dates and a monthly plan
           </button>
         ) : (
           <>
             <Field
               label="Starts"
-              id="event-start"
-              hint="Optional — what the saving pace is measured against."
+              id="bucket-start"
+              hint="Optional. A trip has dates; something you're saving up for might not."
             >
               <input
-                id="event-start"
+                id="bucket-start"
                 className="input"
                 type="date"
                 value={startDate}
@@ -165,14 +173,37 @@ export function EventSheet({
               />
             </Field>
 
+            <Field
+              label="Ends"
+              id="bucket-end"
+              hint={
+                rangeReversed
+                  ? undefined
+                  : 'With both dates set, expenses you log inside the range go to this bucket.'
+              }
+            >
+              <input
+                id="bucket-end"
+                className="input"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+              {rangeReversed && (
+                <span className="stat__note tone-over">
+                  The end date is before the start date.
+                </span>
+              )}
+            </Field>
+
             <div className="field">
-              <label className="field__label" htmlFor="event-monthly">
+              <label className="field__label" htmlFor="bucket-monthly">
                 Set aside each month
               </label>
               <div className="amount-input amount-input--sm">
                 <span className="amount-input__symbol">$</span>
                 <input
-                  id="event-monthly"
+                  id="bucket-monthly"
                   value={monthlyText}
                   onChange={(e) => setMonthlyText(e.target.value)}
                   inputMode="decimal"
@@ -186,9 +217,9 @@ export function EventSheet({
               </span>
             </div>
 
-            <Field label="Note" id="event-note" hint="Optional">
+            <Field label="Note" id="bucket-note" hint="Optional">
               <textarea
-                id="event-note"
+                id="bucket-note"
                 className="textarea"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -199,10 +230,10 @@ export function EventSheet({
         )}
 
         <button type="submit" className="btn btn--primary btn--block" disabled={saving}>
-          {saving ? 'Saving…' : event ? 'Save changes' : 'Create event'}
+          {saving ? 'Saving…' : bucket ? 'Save changes' : 'Create bucket'}
         </button>
 
-        {event && entryCount === 0 && (
+        {bucket && entryCount === 0 && (
           <button
             type="button"
             className="btn btn--danger btn--block"
@@ -211,24 +242,24 @@ export function EventSheet({
                 setConfirmingDelete(true);
                 return;
               }
-              await deleteEvent(event.id);
-              notify('Event removed');
+              await deleteBucket(bucket.id);
+              notify('Bucket removed');
               onClose();
             }}
           >
-            {confirmingDelete ? 'Tap again to delete' : 'Delete event'}
+            {confirmingDelete ? 'Tap again to delete' : 'Delete bucket'}
           </button>
         )}
 
         {/*
-          Deleting an event with entries has no good answer: untagging them
+          Deleting a bucket with entries has no good answer: untagging them
           would change the totals of months that may already be closed, and
           removing them would destroy reconciled history. Closing keeps both.
         */}
-        {event && entryCount > 0 && (
+        {bucket && entryCount > 0 && (
           <span className="stat__note">
             {entryCount} {entryCount === 1 ? 'entry is' : 'entries are'} logged against this
-            event, so it can't be deleted — closing it keeps the record intact.
+            bucket, so it can't be deleted — closing it keeps the record intact.
           </span>
         )}
       </form>

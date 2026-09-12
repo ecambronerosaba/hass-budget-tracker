@@ -1168,14 +1168,14 @@ table.data tr:last-child td {
   flex: 1;
 }
 
-/* An event row carries a hairline-thin progress bar under its sub-line — the
+/* A bucket row carries a hairline-thin progress bar under its sub-line — the
    same 6px track the category breakdown uses, just nested inside a list row,
    where the elements have to be spans rather than divs. */
-.eventrow .catbar__track {
+.bucketrow .catbar__track {
   display: block;
   width: 100%;
 }
 
-.eventrow .catbar__fill {
+.bucketrow .catbar__fill {
   display: block;
 }

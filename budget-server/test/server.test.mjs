@@ -69,8 +69,8 @@ function emptyDocDataShape() {
     categories: [],
     recurring: [],
     // Present in the empty document but deliberately absent from DATA_KEYS:
-    // requiring it would 400 a PUT from a client built before event budgets.
-    events: [],
+    // requiring it would 400 a PUT from a client built before buckets.
+    buckets: [],
     sessions: [],
     settings: null,
   };

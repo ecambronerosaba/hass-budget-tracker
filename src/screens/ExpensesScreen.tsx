@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { BulkExpenseSheet } from '../components/BulkExpenseSheet';
 import { ExpenseSheet } from '../components/ExpenseSheet';
 import {
-  IconFlag,
+  IconBucket,
   IconInbox,
   IconLink,
   IconPlus,
@@ -18,7 +18,7 @@ import {
 } from '../components/ui';
 import { formatDayLabel, monthLabel } from '../lib/dates';
 import { netAmount, sumNet } from '../lib/expense';
-import { countsAgainstMonth, isEventSpend } from '../lib/event';
+import { countsAgainstMonth, isBucketSpend } from '../lib/bucket';
 import type { Expense } from '../types/models';
 import { useApp, useCategoryMap, useMonthExpenses } from '../state/store';
 
@@ -26,7 +26,7 @@ type SortKey = 'date' | 'amount';
 
 /** The month's ledger (§4.2): sortable, filterable, with a running total. */
 export function ExpensesScreen() {
-  const { activeMonthId, events, preferences, setPreference, isLocked } = useApp();
+  const { activeMonthId, buckets, preferences, setPreference, isLocked } = useApp();
   const expenses = useMonthExpenses(activeMonthId);
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
@@ -76,12 +76,13 @@ export function ExpensesScreen() {
     );
   }, [expenses, categoryFilter, sort]);
 
-  // The running total matches the Month screen's: event spending was budgeted
-  // when it was set aside, so counting it here would contradict the dashboard.
-  // The rows still show — they're real charges and they reach reconciliation.
+  // The running total matches the Month screen's: bucket spending was
+  // budgeted when it was set aside, so counting it here would contradict the
+  // dashboard. The rows still show — they're real charges and they reach
+  // reconciliation.
   const total = sumNet(visible.filter(countsAgainstMonth));
-  const eventSpend = sumNet(visible.filter(isEventSpend));
-  const eventNames = useMemo(() => new Map(events.map((e) => [e.id, e.name])), [events]);
+  const bucketSpend = sumNet(visible.filter(isBucketSpend));
+  const bucketNames = useMemo(() => new Map(buckets.map((b) => [b.id, b.name])), [buckets]);
   const locked = isLocked(activeMonthId);
 
   return (
@@ -97,9 +98,9 @@ export function ExpensesScreen() {
               · {visible.length} {visible.length === 1 ? 'item' : 'items'}
             </span>
           </div>
-          {eventSpend > 0 && (
+          {bucketSpend > 0 && (
             <span className="stat__note">
-              Plus {money(eventSpend)} from event funds, budgeted when it was saved.
+              Plus {money(bucketSpend)} from bucket funds, budgeted when it was saved.
             </span>
           )}
         </div>
@@ -180,10 +181,10 @@ export function ExpensesScreen() {
                     )}
                     {expense.source === 'csv-added' && <IconUpload />}
                     {expense.reconciliationStatus === 'matched' && <IconLink />}
-                    {expense.eventId && (
+                    {expense.bucketId && (
                       <>
-                        <IconFlag />
-                        <span>{eventNames.get(expense.eventId) ?? 'Event'}</span>
+                        <IconBucket />
+                        <span>{bucketNames.get(expense.bucketId) ?? 'Bucket'}</span>
                       </>
                     )}
                     <SplitNote expense={expense} />

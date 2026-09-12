@@ -2,7 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
-  BudgetEvent,
+  Bucket,
   Category,
   Expense,
   Month,
@@ -12,6 +12,7 @@ import type {
 } from '../types/models';
 import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './seed';
 import * as idb from './idb';
+import { migrateBackup } from '../lib/migrate';
 
 /** v1 storage: everything local, nothing over the network (PRD §2, §6). */
 export class IndexedDbRepository implements BudgetRepository {
@@ -91,18 +92,18 @@ export class IndexedDbRepository implements BudgetRepository {
     await idb.remove('recurring', id);
   }
 
-  async listEvents(): Promise<BudgetEvent[]> {
-    const events = await idb.getAll<BudgetEvent>('events');
-    // Newest first — an event you just made is the one you're about to use.
-    return events.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  async listBuckets(): Promise<Bucket[]> {
+    const buckets = await idb.getAll<Bucket>('buckets');
+    // Newest first — a bucket you just made is the one you're about to use.
+    return buckets.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async saveEvent(event: BudgetEvent): Promise<void> {
-    await idb.put('events', event);
+  async saveBucket(bucket: Bucket): Promise<void> {
+    await idb.put('buckets', bucket);
   }
 
-  async deleteEvent(id: string): Promise<void> {
-    await idb.remove('events', id);
+  async deleteBucket(id: string): Promise<void> {
+    await idb.remove('buckets', id);
   }
 
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
@@ -118,52 +119,53 @@ export class IndexedDbRepository implements BudgetRepository {
   }
 
   async exportAll(): Promise<BackupFile> {
-    const [months, expenses, categories, recurring, events, sessions, settings] =
+    const [months, expenses, categories, recurring, buckets, sessions, settings] =
       await Promise.all([
         idb.getAll<Month>('months'),
         idb.getAll<Expense>('expenses'),
         idb.getAll<Category>('categories'),
         idb.getAll<RecurringExpense>('recurring'),
-        idb.getAll<BudgetEvent>('events'),
+        idb.getAll<Bucket>('buckets'),
         idb.getAll<ReconciliationSession>('sessions'),
         this.getSettings(),
       ]);
     return {
       format: 'budget-tracker-backup',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       months,
       expenses,
       categories,
       recurring,
-      events,
+      buckets,
       sessions,
       settings,
     };
   }
 
   async importAll(backup: BackupFile): Promise<void> {
+    const migrated = migrateBackup(backup);
     await idb.clearStores([
       'months',
       'expenses',
       'categories',
       'recurring',
-      'events',
+      'buckets',
       'sessions',
       'settings',
     ]);
     await Promise.all([
-      idb.putMany('months', backup.months ?? []),
-      idb.putMany('expenses', backup.expenses ?? []),
+      idb.putMany('months', migrated.months ?? []),
+      idb.putMany('expenses', migrated.expenses ?? []),
       idb.putMany(
         'categories',
-        backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES,
+        migrated.categories?.length ? migrated.categories : DEFAULT_CATEGORIES,
       ),
-      idb.putMany('recurring', backup.recurring ?? []),
-      // `?? []` throughout: a v1 backup predates events and simply has none.
-      idb.putMany('events', backup.events ?? []),
-      idb.putMany('sessions', backup.sessions ?? []),
-      idb.put('settings', backup.settings ?? DEFAULT_SETTINGS),
+      idb.putMany('recurring', migrated.recurring ?? []),
+      // `?? []` throughout: a v1 backup predates buckets and simply has none.
+      idb.putMany('buckets', migrated.buckets ?? []),
+      idb.putMany('sessions', migrated.sessions ?? []),
+      idb.put('settings', migrated.settings ?? DEFAULT_SETTINGS),
     ]);
   }
 }

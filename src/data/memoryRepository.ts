@@ -2,7 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
-  BudgetEvent,
+  Bucket,
   Category,
   Expense,
   Month,
@@ -11,6 +11,7 @@ import type {
   RecurringExpense,
 } from '../types/models';
 import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './seed';
+import { migrateBackup } from '../lib/migrate';
 
 /**
  * Non-persistent fallback, used when IndexedDB is unavailable (private
@@ -22,7 +23,7 @@ export class MemoryRepository implements BudgetRepository {
   private expenses = new Map<string, Expense>();
   private categories = new Map<string, Category>();
   private recurring = new Map<string, RecurringExpense>();
-  private events = new Map<string, BudgetEvent>();
+  private buckets = new Map<string, Bucket>();
   private sessions = new Map<MonthId, ReconciliationSession>();
   private settings: AppSettings = { ...DEFAULT_SETTINGS };
 
@@ -90,16 +91,16 @@ export class MemoryRepository implements BudgetRepository {
     this.recurring.delete(id);
   }
 
-  async listEvents(): Promise<BudgetEvent[]> {
-    return [...this.events.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  async listBuckets(): Promise<Bucket[]> {
+    return [...this.buckets.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async saveEvent(event: BudgetEvent): Promise<void> {
-    this.events.set(event.id, { ...event });
+  async saveBucket(bucket: Bucket): Promise<void> {
+    this.buckets.set(bucket.id, { ...bucket });
   }
 
-  async deleteEvent(id: string): Promise<void> {
-    this.events.delete(id);
+  async deleteBucket(id: string): Promise<void> {
+    this.buckets.delete(id);
   }
 
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
@@ -117,27 +118,28 @@ export class MemoryRepository implements BudgetRepository {
   async exportAll(): Promise<BackupFile> {
     return {
       format: 'budget-tracker-backup',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       months: [...this.months.values()],
       expenses: [...this.expenses.values()],
       categories: [...this.categories.values()],
       recurring: [...this.recurring.values()],
-      events: [...this.events.values()],
+      buckets: [...this.buckets.values()],
       sessions: [...this.sessions.values()],
       settings: this.settings,
     };
   }
 
   async importAll(backup: BackupFile): Promise<void> {
-    this.months = new Map((backup.months ?? []).map((m) => [m.id, m]));
-    this.expenses = new Map((backup.expenses ?? []).map((e) => [e.id, e]));
-    const cats = backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES;
+    const migrated = migrateBackup(backup);
+    this.months = new Map((migrated.months ?? []).map((m) => [m.id, m]));
+    this.expenses = new Map((migrated.expenses ?? []).map((e) => [e.id, e]));
+    const cats = migrated.categories?.length ? migrated.categories : DEFAULT_CATEGORIES;
     this.categories = new Map(cats.map((c) => [c.id, c]));
-    this.recurring = new Map((backup.recurring ?? []).map((r) => [r.id, r]));
-    // `?? []`: a v1 backup predates events and simply has none.
-    this.events = new Map((backup.events ?? []).map((e) => [e.id, e]));
-    this.sessions = new Map((backup.sessions ?? []).map((s) => [s.monthId, s]));
-    this.settings = backup.settings ?? { ...DEFAULT_SETTINGS };
+    this.recurring = new Map((migrated.recurring ?? []).map((r) => [r.id, r]));
+    // `?? []`: a v1 backup predates buckets and simply has none.
+    this.buckets = new Map((migrated.buckets ?? []).map((e) => [e.id, e]));
+    this.sessions = new Map((migrated.sessions ?? []).map((s) => [s.monthId, s]));
+    this.settings = migrated.settings ?? { ...DEFAULT_SETTINGS };
   }
 }

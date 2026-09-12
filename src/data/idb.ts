@@ -5,12 +5,12 @@ export type StoreName =
   | 'expenses'
   | 'categories'
   | 'recurring'
-  | 'events'
+  | 'buckets'
   | 'sessions'
   | 'settings';
 
 const DB_NAME = 'budget-tracker';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -37,8 +37,41 @@ export function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('recurring')) {
         db.createObjectStore('recurring', { keyPath: 'id' });
       }
-      if (!db.objectStoreNames.contains('events')) {
-        db.createObjectStore('events', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('buckets')) {
+        db.createObjectStore('buckets', { keyPath: 'id' });
+      }
+      // v2 → v3: the feature was called "events" when it shipped. Move the
+      // rows over and re-tag the expenses inside the same version-change
+      // transaction, so an interrupted upgrade can't half-rename the data.
+      const tx = request.transaction;
+      if (db.objectStoreNames.contains('events') && tx) {
+        const legacy = tx.objectStore('events');
+        const target = tx.objectStore('buckets');
+        legacy.openCursor().onsuccess = (ev) => {
+          const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>).result;
+          if (!cursor) {
+            db.deleteObjectStore('events');
+            return;
+          }
+          target.put(cursor.value);
+          cursor.continue();
+        };
+      }
+      if (tx && db.objectStoreNames.contains('expenses')) {
+        const expenses = tx.objectStore('expenses');
+        expenses.openCursor().onsuccess = (ev) => {
+          const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>).result;
+          if (!cursor) return;
+          const row = cursor.value as Record<string, unknown>;
+          if (row.eventId !== undefined || row.eventKind !== undefined) {
+            const { eventId, eventKind, ...rest } = row;
+            cursor.update({
+              ...rest,
+              ...(eventId ? { bucketId: eventId, bucketKind: eventKind ?? 'spend' } : {}),
+            });
+          }
+          cursor.continue();
+        };
       }
       if (!db.objectStoreNames.contains('sessions')) {
         db.createObjectStore('sessions', { keyPath: 'monthId' });

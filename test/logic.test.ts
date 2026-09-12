@@ -24,7 +24,7 @@ import { clampReimbursement, netAmount, sumNet } from '../src/lib/expense.ts';
 import { summarizeMonth, totalsByCategory, upcomingRecurring } from '../src/lib/projection.ts';
 import type {
   BankTransaction,
-  BudgetEvent,
+  Bucket,
   Expense,
   Month,
   RecurringExpense,
@@ -478,7 +478,7 @@ function expenseFixture(patch: Partial<Expense> = {}): Expense {
   };
 }
 
-function eventFixture(patch: Partial<BudgetEvent> = {}): BudgetEvent {
+function bucketFixture(patch: Partial<Bucket> = {}): Bucket {
   return {
     id: 'evt_1',
     name: 'Japan trip',
@@ -492,13 +492,13 @@ function eventFixture(patch: Partial<BudgetEvent> = {}): BudgetEvent {
   };
 }
 
-test('event spending is not part of the month it happened in', () => {
+test('bucket spending is not part of the month it happened in', () => {
   const s = summarizeMonth({
     month: monthFixture(),
     expenses: [
       expenseFixture({ amount: 300 }),
-      expenseFixture({ amount: 400, eventId: 'evt_1', eventKind: 'contribution' }),
-      expenseFixture({ amount: 900, eventId: 'evt_1', eventKind: 'spend' }),
+      expenseFixture({ amount: 400, bucketId: 'evt_1', bucketKind: 'contribution' }),
+      expenseFixture({ amount: 900, bucketId: 'evt_1', bucketKind: 'spend' }),
     ],
     recurring: [],
     now: '2026-09-15',
@@ -510,12 +510,12 @@ test('event spending is not part of the month it happened in', () => {
   assert.equal(s.remaining, 1300);
 });
 
-test('a reimbursed event spend is excluded gross and net alike', () => {
+test('a reimbursed bucket spend is excluded gross and net alike', () => {
   const s = summarizeMonth({
     month: monthFixture(),
     expenses: [
       expenseFixture({ amount: 200, reimbursement: 50 }),
-      expenseFixture({ amount: 175, reimbursement: 150, eventId: 'evt_1', eventKind: 'spend' }),
+      expenseFixture({ amount: 175, reimbursement: 150, bucketId: 'evt_1', bucketKind: 'spend' }),
     ],
     recurring: [],
     now: '2026-09-15',
@@ -529,46 +529,46 @@ test('a planned monthly set-aside shows as still expected until it is logged', (
     month: monthFixture(),
     expenses: [],
     recurring: [],
-    events: [eventFixture()],
+    buckets: [bucketFixture()],
     now: '2026-09-15',
   });
-  assert.equal(pending.upcomingEvents.length, 1);
-  assert.equal(pending.upcomingEvents[0].amount, 400);
+  assert.equal(pending.upcomingBuckets.length, 1);
+  assert.equal(pending.upcomingBuckets[0].amount, 400);
   assert.equal(pending.upcomingTotal, 400);
 
   const done = summarizeMonth({
     month: monthFixture(),
-    expenses: [expenseFixture({ amount: 400, eventId: 'evt_1', eventKind: 'contribution' })],
+    expenses: [expenseFixture({ amount: 400, bucketId: 'evt_1', bucketKind: 'contribution' })],
     recurring: [],
-    events: [eventFixture()],
+    buckets: [bucketFixture()],
     now: '2026-09-15',
   });
-  assert.equal(done.upcomingEvents.length, 0);
+  assert.equal(done.upcomingBuckets.length, 0);
   assert.equal(done.upcomingTotal, 0);
 });
 
 test('a partly-funded month expects only the rest of the set-aside', () => {
   const s = summarizeMonth({
     month: monthFixture(),
-    expenses: [expenseFixture({ amount: 150, eventId: 'evt_1', eventKind: 'contribution' })],
+    expenses: [expenseFixture({ amount: 150, bucketId: 'evt_1', bucketKind: 'contribution' })],
     recurring: [],
-    events: [eventFixture()],
+    buckets: [bucketFixture()],
     now: '2026-09-15',
   });
-  assert.equal(s.upcomingEvents[0].amount, 250);
+  assert.equal(s.upcomingBuckets[0].amount, 250);
 });
 
-test('only saving events with a plan are expected', () => {
+test('only saving buckets with a plan are expected', () => {
   const s = summarizeMonth({
     month: monthFixture(),
     expenses: [],
     recurring: [],
-    events: [
-      eventFixture({ id: 'a', phase: 'spending' }),
-      eventFixture({ id: 'b', phase: 'closed' }),
-      eventFixture({ id: 'c', monthlyContribution: 0 }),
+    buckets: [
+      bucketFixture({ id: 'a', phase: 'spending' }),
+      bucketFixture({ id: 'b', phase: 'closed' }),
+      bucketFixture({ id: 'c', monthlyContribution: 0 }),
     ],
     now: '2026-09-15',
   });
-  assert.equal(s.upcomingEvents.length, 0);
+  assert.equal(s.upcomingBuckets.length, 0);
 });

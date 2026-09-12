@@ -21,7 +21,7 @@ import {
   useMoneyFormatter,
 } from '../components/ui';
 import { currentMonthId, formatDayLabel, monthLabel, today } from '../lib/dates';
-import { countsAgainstMonth, summarizeEvent } from '../lib/event';
+import { countsAgainstMonth, summarizeBucket } from '../lib/bucket';
 import { summarizeMonth } from '../lib/projection';
 import type { Expense } from '../types/models';
 import {
@@ -34,7 +34,7 @@ import {
 import type { Screen } from '../App';
 
 export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
-  const { activeMonthId, recurring, events, expenses: allExpenses, isLocked } = useApp();
+  const { activeMonthId, recurring, buckets, expenses: allExpenses, isLocked } = useApp();
   const month = useMonth(activeMonthId);
   const monthExpenses = useMonthExpenses(activeMonthId);
   const session = useSession(activeMonthId);
@@ -44,17 +44,17 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
 
-  // The month's own spending. Event spending was budgeted in the month it was
-  // set aside, so it is not part of what this month cost, how it was split up,
-  // or what the "Recent" list is a recent slice of.
+  // The month's own spending. Bucket spending was budgeted in the month it
+  // was set aside, so it is not part of what this month cost, how it was
+  // split up, or what the "Recent" list is a recent slice of.
   const expenses = useMemo(
     () => monthExpenses.filter(countsAgainstMonth),
     [monthExpenses],
   );
 
   const summary = useMemo(
-    () => (month ? summarizeMonth({ month, expenses: monthExpenses, recurring, events }) : null),
-    [month, monthExpenses, recurring, events],
+    () => (month ? summarizeMonth({ month, expenses: monthExpenses, recurring, buckets }) : null),
+    [month, monthExpenses, recurring, buckets],
   );
 
   if (!month || !summary) {
@@ -243,7 +243,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
         </div>
       )}
 
-      {(summary.upcoming.length > 0 || summary.upcomingEvents.length > 0) &&
+      {(summary.upcoming.length > 0 || summary.upcomingBuckets.length > 0) &&
         month.status === 'open' && (
         <section className="card">
           <SectionHeading title="Expected this month" />
@@ -270,17 +270,17 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
                 </span>
               </div>
             ))}
-            {summary.upcomingEvents.map(({ event, amount }) => (
-              <div className="row row--between" key={event.id}>
+            {summary.upcomingBuckets.map(({ bucket, amount }) => (
+              <div className="row row--between" key={bucket.id}>
                 <span className="row" style={{ gap: 'var(--s-2)', minWidth: 0 }}>
                   <span
                     className="dot"
                     style={{
-                      background: categories.get(event.category)?.color ?? 'var(--text-tertiary)',
+                      background: categories.get(bucket.category)?.color ?? 'var(--text-tertiary)',
                     }}
                   />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {event.name} fund
+                    {bucket.name} fund
                   </span>
                 </span>
                 <span className="row" style={{ gap: 'var(--s-3)' }}>
@@ -293,41 +293,41 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
         </section>
       )}
 
-      {events.some((e) => e.phase !== 'closed') && (
+      {buckets.some((b) => b.phase !== 'closed') && (
         <section className="card card--flush">
           <div className="row row--between" style={{ padding: 'var(--s-5) var(--s-5) var(--s-3)' }}>
-            <h2 className="section-label">Events</h2>
-            <button className="linkish" onClick={() => onNavigate('events')}>
+            <h2 className="section-label">Buckets</h2>
+            <button className="linkish" onClick={() => onNavigate('buckets')}>
               See all
             </button>
           </div>
           <div className="list">
-            {events
-              .filter((e) => e.phase !== 'closed')
-              .map((event) => {
-                // An event's fund spans months, so this reads the whole
+            {buckets
+              .filter((b) => b.phase !== 'closed')
+              .map((bucket) => {
+                // A bucket's fund spans months, so this reads the whole
                 // ledger rather than the month on screen.
-                const s = summarizeEvent({
-                  event,
-                  expenses: allExpenses.filter((x) => x.eventId === event.id),
+                const s = summarizeBucket({
+                  bucket,
+                  expenses: allExpenses.filter((x) => x.bucketId === bucket.id),
                 });
                 return (
                   <button
                     className="list__item"
-                    key={event.id}
-                    onClick={() => onNavigate('events')}
+                    key={bucket.id}
+                    onClick={() => onNavigate('buckets')}
                   >
                     <span
                       className="dot"
                       style={{
                         background:
-                          categories.get(event.category)?.color ?? 'var(--text-tertiary)',
+                          categories.get(bucket.category)?.color ?? 'var(--text-tertiary)',
                       }}
                     />
                     <span className="list__main">
-                      <span className="list__title">{event.name}</span>
+                      <span className="list__title">{bucket.name}</span>
                       <span className="list__sub">
-                        <span>{event.phase === 'saving' ? 'Saving' : 'Spending'}</span>
+                        <span>{bucket.phase === 'saving' ? 'Saving' : 'Spending'}</span>
                         <span>·</span>
                         <span>
                           {money(s.saved)} of {money(s.target, { compact: true })}
@@ -342,7 +342,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: Screen) => void
                     </span>
                     <span className="list__amount num">
                       <Money
-                        amount={event.phase === 'saving' ? s.targetRemaining : s.fundRemaining}
+                        amount={bucket.phase === 'saving' ? s.targetRemaining : s.fundRemaining}
                         compact
                       />
                     </span>

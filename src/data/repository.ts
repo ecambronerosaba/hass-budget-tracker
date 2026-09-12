@@ -9,7 +9,7 @@
 import type {
   AppSettings,
   BackupFile,
-  BudgetEvent,
+  Bucket,
   Category,
   Expense,
   Month,
@@ -40,9 +40,9 @@ export interface BudgetRepository {
   saveRecurring(recurring: RecurringExpense): Promise<void>;
   deleteRecurring(id: string): Promise<void>;
 
-  listEvents(): Promise<BudgetEvent[]>;
-  saveEvent(event: BudgetEvent): Promise<void>;
-  deleteEvent(id: string): Promise<void>;
+  listBuckets(): Promise<Bucket[]>;
+  saveBucket(bucket: Bucket): Promise<void>;
+  deleteBucket(id: string): Promise<void>;
 
   getSession(monthId: MonthId): Promise<ReconciliationSession | null>;
   saveSession(session: ReconciliationSession): Promise<void>;

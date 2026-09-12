@@ -1,24 +1,29 @@
 /**
- * Event budgets: the one rule, end to end.
+ * Buckets: the one rule, end to end.
  *
- * Money you set aside for an event counts against the month you set it aside
- * in — that is the line item in the monthly budget. Money you spend on the
- * event counts against no month at all, because it was already budgeted when
+ * Money you set aside for a bucket counts against the month you set it aside
+ * in — that is the line item in the monthly budget. Money you spend from the
+ * bucket counts against no month at all, because it was already budgeted when
  * you saved it. Getting that backwards in either direction double-counts or
  * loses money, and neither is visible from a unit test of the maths alone.
  *
  * Asserts, against the CURRENT code in src/:
  *  1. A contribution lowers "Left this month" by exactly its amount.
- *  2. Event spending does NOT lower it, while still appearing in the month's
+ *  2. Bucket spending does NOT lower it, while still appearing in the month's
  *     ledger (so it can still reach reconciliation).
  *  3. Flipping Saving → Spending changes the screen's primary action.
  *  4. "Cover from <month>" clears the unfunded amount, adds exactly one
  *     contribution, and takes that much out of the month.
  *  5. A contribution dated into a closed month is refused at the sheet.
+ *  6. An expense dated inside a bucket's date range opens with that bucket's
+ *     chip preselected, with a note explaining why.
+ *  7. Switching the picker to "This month" puts the money back into the
+ *     month's budget.
+ *  8. With every bucket closed, the "Counts against" row is absent.
  *
  * Run against a built preview:
  *   npm run build && npx vite preview --port 4173
- *   node scripts/verify-event-budget.mjs http://localhost:4173
+ *   node scripts/verify-bucket-budget.mjs http://localhost:4173
  */
 import { chromium } from 'playwright';
 
@@ -53,6 +58,12 @@ function expect(actual, wanted, what) {
   }
 }
 
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+}
+
 try {
   await page.goto(base);
   await page.getByRole('button', { name: 'Set budget' }).waitFor();
@@ -66,15 +77,15 @@ try {
 
   /* ---- 1. a contribution is a line item in the month -------------------- */
 
-  await tab('Events').click();
-  await page.getByRole('button', { name: 'New event' }).click();
+  await tab('Buckets').click();
+  await page.getByRole('button', { name: 'New bucket' }).click();
   await sheet.waitFor();
   await page.getByLabel('Name').fill('Japan trip');
-  await page.locator('#event-target').fill('3000');
-  await sheet.getByRole('button', { name: 'Create event' }).click();
+  await page.locator('#bucket-target').fill('3000');
+  await sheet.getByRole('button', { name: 'Create bucket' }).click();
   await sheet.waitFor({ state: 'detached' });
   await page.getByText('Set aside so far').waitFor();
-  step('created the "Japan trip" event, $3,000 target — opened straight into it');
+  step('created the "Japan trip" bucket, $3,000 target — opened straight into it');
 
   await page.getByRole('button', { name: 'Add to the fund' }).click();
   await sheet.waitFor();
@@ -89,7 +100,7 @@ try {
 
   /* ---- 3. the phase flip changes the primary action --------------------- */
 
-  await tab('Events').click();
+  await tab('Buckets').click();
   await page.getByText('Japan trip', { exact: true }).click();
   await page.getByRole('button', { name: 'Add to the fund' }).waitFor();
   step('Saving mode offers "Add to the fund"');
@@ -101,7 +112,7 @@ try {
   }
   step('flipping to Spending swaps it for "Log an expense"');
 
-  /* ---- 2. event spending leaves the month alone ------------------------- */
+  /* ---- 2. bucket spending leaves the month alone ------------------------- */
 
   await page.getByRole('button', { name: 'Log an expense' }).click();
   await sheet.waitFor();
@@ -112,20 +123,20 @@ try {
   await sheet.waitFor({ state: 'detached' });
   step('logged a $250 expense against the fund');
 
-  expect(await leftThisMonth(), 1600, 'after $250 of event spending');
+  expect(await leftThisMonth(), 1600, 'after $250 of bucket spending');
   step('the month did not move — that money was budgeted when it was saved');
 
   // It still has to be in the month's ledger, or reconciliation can never see
   // the charge the statement carries.
   await tab('Expenses').click();
   await page.getByText('Kyoto dinner', { exact: true }).waitFor();
-  const ledgerNote = await page.getByText(/from event funds, budgeted when it was saved/).count();
-  if (!ledgerNote) throw new Error('the ledger did not state the event portion');
+  const ledgerNote = await page.getByText(/from bucket funds, budgeted when it was saved/).count();
+  if (!ledgerNote) throw new Error('the ledger did not state the bucket portion');
   step('it still shows in the month ledger, with the total stating why it is apart');
 
   /* ---- 4. cover from this month ---------------------------------------- */
 
-  await tab('Events').click();
+  await tab('Buckets').click();
   await page.getByText('Japan trip', { exact: true }).click();
   await page.getByRole('button', { name: 'Log an expense' }).click();
   await sheet.waitFor();
@@ -154,7 +165,7 @@ try {
   // at a locked month. Dating into a month with no record yet can't be locked,
   // so this asserts the live consequence line instead, which is the same code
   // path with the other branch taken.
-  await tab('Events').click();
+  await tab('Buckets').click();
   await page.getByText('Japan trip', { exact: true }).click();
   await page.getByRole('button', { name: 'Saving', exact: true }).click();
   await page.getByRole('button', { name: 'Add to the fund' }).click();
@@ -169,14 +180,81 @@ try {
     throw new Error('the "counts against <month>" note did not follow the date field');
   }
   step('the consequence line tracks the date field, so the month it hits is never a surprise');
+  await page.keyboard.press('Escape');
+  await sheet.waitFor({ state: 'detached' });
+
+  /* ---- 6. auto-assignment by date range ---------------------------------- */
+
+  // Already on the "Japan trip" detail from the closed-month check above —
+  // no need to leave and come back. Give it a date range spanning today, in
+  // Spending phase, so a freshly logged expense dated today is claimed
+  // automatically.
+  await page.getByRole('button', { name: 'Spending', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit bucket' }).click();
+  await sheet.waitFor();
+  if (await page.getByText('+ Add dates and a monthly plan').count()) {
+    await page.getByText('+ Add dates and a monthly plan').click();
+  }
+  const rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 3);
+  const rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 3);
+  await page.locator('#bucket-start').fill(isoDate(rangeStart));
+  await page.locator('#bucket-end').fill(isoDate(rangeEnd));
+  await sheet.getByRole('button', { name: 'Save changes' }).click();
+  await sheet.waitFor({ state: 'detached' });
+  step('gave "Japan trip" a date range spanning today, in Spending phase');
+
+  await tab('Month').click();
+  await page.locator('.fab').click();
+  await sheet.waitFor();
+  const bucketChip = sheet.getByRole('button', { name: /Japan trip/ });
+  await bucketChip.waitFor();
+  const pressed = await bucketChip.getAttribute('aria-pressed');
+  if (pressed !== 'true') {
+    throw new Error('a same-day expense did not open with the trip bucket preselected');
+  }
+  await sheet.getByText(/Dated inside/).waitFor();
+  step('a same-day expense opens with the bucket chip preselected, and says why');
+
+  /* ---- 7. switching the picker back to "This month" -------------------- */
+
+  await sheet.getByRole('button', { name: 'This month', exact: true }).click();
+  await page.getByLabel('Amount').first().fill('75');
+  await page.locator('#expense-description').fill('Coffee at home');
+  await sheet.getByRole('button', { name: 'Save expense' }).click();
+  await sheet.waitFor({ state: 'detached' });
+  step('picked "This month" instead of the auto-matched bucket, and saved');
+
+  // 1450 (after task 4/5) minus this new $75 ordinary expense.
+  expect(await leftThisMonth(), 1375, 'after overriding the picker back to This month');
+  step('the money landed back in the month\'s budget, not the bucket fund');
+
+  /* ---- 8. no open buckets hides the row entirely ------------------------ */
+
+  await tab('Buckets').click();
+  await page.getByText('Japan trip', { exact: true }).click();
+  await page.getByRole('button', { name: 'Close this bucket' }).click();
+  await page.getByRole('button', { name: 'Tap again to close it' }).click();
+  await page.getByText('Bucket closed', { exact: false }).first().waitFor();
+  step('closed the only bucket');
+
+  await tab('Month').click();
+  await page.locator('.fab').click();
+  await sheet.waitFor();
+  if (await sheet.getByText('Counts against').count()) {
+    throw new Error('the "Counts against" row survived with no open buckets');
+  }
+  step('with no open buckets, the "Counts against" row is absent entirely');
+  await page.keyboard.press('Escape');
+  await sheet.waitFor({ state: 'detached' });
 
   console.log(
-    '\nPASS: contributions are a line item in the month, event spending is not, and the two never double-count.',
+    '\nPASS: contributions are a line item in the month, bucket spending is not, auto-assignment ' +
+      'preselects without hiding, and the picker can always send money back to the month.',
   );
 } catch (err) {
   console.error('\nFAIL:', err.message);
   await page
-    .screenshot({ path: 'screenshots/verify-event-budget-failure.png', fullPage: true })
+    .screenshot({ path: 'screenshots/verify-bucket-budget-failure.png', fullPage: true })
     .catch(() => {});
   process.exitCode = 1;
 } finally {

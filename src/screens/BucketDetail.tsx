@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { ContributionSheet } from '../components/ContributionSheet';
-import { EventSheet } from '../components/EventSheet';
+import { BucketSheet } from '../components/BucketSheet';
 import { ExpenseSheet } from '../components/ExpenseSheet';
 import {
   IconArrowLeft,
+  IconBucket,
   IconDownload,
-  IconFlag,
   IconInfo,
   IconLock,
   IconWallet,
@@ -22,27 +22,27 @@ import {
   useMoneyFormatter,
 } from '../components/ui';
 import { currentMonthId, formatDayLabel, monthLabel } from '../lib/dates';
-import { isContribution } from '../lib/event';
+import { isContribution } from '../lib/bucket';
 import type { Expense } from '../types/models';
 import {
   useApp,
+  useBucket,
+  useBucketExpenses,
+  useBucketSummary,
   useCategoryMap,
-  useEvent,
-  useEventExpenses,
-  useEventSummary,
 } from '../state/store';
 
 /**
- * One event, in whichever phase it's in. Saving leads with what's in the fund
- * against the target; spending leads with what's left of the fund. The flip
- * between the two is the point of the screen, so it sits directly under the
- * headline rather than behind a menu.
+ * One bucket, in whichever phase it's in. Saving leads with what's in the
+ * fund against the target; spending leads with what's left of the fund. The
+ * flip between the two is the point of the screen, so it sits directly under
+ * the headline rather than behind a menu.
  */
-export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () => void }) {
-  const { setEventPhase, coverFromMonth, isLocked, notify } = useApp();
-  const event = useEvent(eventId);
-  const entries = useEventExpenses(eventId);
-  const summary = useEventSummary(eventId);
+export function BucketDetail({ bucketId, onBack }: { bucketId: string; onBack: () => void }) {
+  const { setBucketPhase, coverFromMonth, isLocked, notify } = useApp();
+  const bucket = useBucket(bucketId);
+  const entries = useBucketExpenses(bucketId);
+  const summary = useBucketSummary(bucketId);
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
 
@@ -52,25 +52,25 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
   const [editingEntry, setEditingEntry] = useState<Expense | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
 
-  if (!event || !summary) return <div className="empty">Loading…</div>;
+  if (!bucket || !summary) return <div className="empty">Loading…</div>;
 
-  const closed = event.phase === 'closed';
-  const color = categories.get(event.category)?.color ?? 'var(--text-tertiary)';
+  const closed = bucket.phase === 'closed';
+  const color = categories.get(bucket.category)?.color ?? 'var(--text-tertiary)';
   const thisMonth = currentMonthId();
   const entryCount = summary.contributionCount + summary.spendCount;
 
   // Saving leads with the fund against the target; spending leads with what's
   // left of it. Same meter, different question.
   const headlineLabel =
-    event.phase === 'saving' ? 'Set aside so far' : closed ? 'Left over' : 'Left in the fund';
-  const headlineValue = event.phase === 'saving' ? summary.saved : summary.fundRemaining;
-  const fraction = event.phase === 'saving' ? summary.fractionSaved : summary.fractionSpent;
+    bucket.phase === 'saving' ? 'Set aside so far' : closed ? 'Left over' : 'Left in the fund';
+  const headlineValue = bucket.phase === 'saving' ? summary.saved : summary.fundRemaining;
+  const fraction = bucket.phase === 'saving' ? summary.fractionSaved : summary.fractionSpent;
 
   return (
     <div className="stack" style={{ ['--gap' as string]: 'var(--s-5)' }}>
       <button className="linkish row" style={{ gap: 6 }} onClick={onBack}>
         <IconArrowLeft />
-        All events
+        All buckets
       </button>
 
       <section className="card">
@@ -81,12 +81,12 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
               <Money amount={Math.abs(headlineValue)} compact />
             </span>
             <button className="linkish" onClick={() => setEditing(true)}>
-              {closed ? 'View details' : 'Edit event'}
+              {closed ? 'View details' : 'Edit bucket'}
             </button>
           </div>
           <span className="headline__meta">
-            {event.name} · {money(summary.target, { compact: true })} target
-            {event.startDate && ` · ${monthLabel(event.startDate.slice(0, 7))}`}
+            {bucket.name} · {money(summary.target, { compact: true })} target
+            {bucket.startDate && ` · ${monthLabel(bucket.startDate.slice(0, 7))}`}
           </span>
         </div>
 
@@ -95,14 +95,14 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
             used={fraction}
             tone={summary.tone}
             label={
-              event.phase === 'saving'
+              bucket.phase === 'saving'
                 ? `${Math.round(summary.fractionSaved * 100)}% of the target set aside`
                 : `${Math.round(summary.fractionSpent * 100)}% of the fund spent`
             }
           />
           <div className="meter-legend">
             <span>
-              {event.phase === 'saving'
+              {bucket.phase === 'saving'
                 ? `${Math.round(summary.fractionSaved * 100)}% of target`
                 : `${Math.round(summary.fractionSpent * 100)}% of fund`}
             </span>
@@ -124,21 +124,21 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
         <section className="card">
           <SectionHeading title="Mode" />
           <Segmented
-            ariaLabel="Event mode"
-            value={event.phase === 'spending' ? 'spending' : 'saving'}
-            onChange={(phase) => setEventPhase(event.id, phase)}
+            ariaLabel="Bucket mode"
+            value={bucket.phase === 'spending' ? 'spending' : 'saving'}
+            onChange={(phase) => setBucketPhase(bucket.id, phase)}
             options={[
               { value: 'saving', label: 'Saving' },
               { value: 'spending', label: 'Spending' },
             ]}
           />
           <p className="stat__note" style={{ marginTop: 'var(--s-3)' }}>
-            {event.phase === 'saving'
+            {bucket.phase === 'saving'
               ? "Money you set aside counts against the month you set it aside in — that's the line item in your monthly budget."
               : "Spending here draws the fund down and doesn't count against any month. It was already budgeted when you saved it."}
           </p>
           <div style={{ marginTop: 'var(--s-4)' }}>
-            {event.phase === 'saving' ? (
+            {bucket.phase === 'saving' ? (
               <button
                 className="btn btn--primary btn--block"
                 onClick={() => setContributing(true)}
@@ -190,8 +190,8 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
             {summary.fundRemaining < 0 ? 'past what was saved' : 'saved but not yet spent'}
           </span>
         </div>
-        {/* A closed event has no plan left to pace against. */}
-        {summary.perMonthNeeded !== undefined && event.phase === 'saving' && (
+        {/* A closed bucket has no plan left to pace against. */}
+        {summary.perMonthNeeded !== undefined && bucket.phase === 'saving' && (
           <div className="stat">
             <span className="stat__label">Needed per month</span>
             <span className="stat__value num">
@@ -202,8 +202,8 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
               {/* The plan and what the target actually needs can differ. Say
                   which is which rather than showing two numbers that look
                   like they disagree. */}
-              {event.monthlyContribution > 0 &&
-                ` · you plan ${money(event.monthlyContribution, { compact: true })}`}
+              {bucket.monthlyContribution > 0 &&
+                ` · you plan ${money(bucket.monthlyContribution, { compact: true })}`}
             </span>
           </div>
         )}
@@ -224,7 +224,7 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
             That money hasn't come out of any month's budget yet.{' '}
             <button
               className="linkish"
-              onClick={() => coverFromMonth(event.id, thisMonth, summary.unfunded)}
+              onClick={() => coverFromMonth(bucket.id, thisMonth, summary.unfunded)}
             >
               Cover from {monthLabel(thisMonth, { year: false })}
             </button>
@@ -236,9 +236,9 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
         <div className="banner">
           <IconLock />
           <div className="banner__body">
-            <strong>Event closed.</strong> Its entries stay in their months and are read-only
+            <strong>Bucket closed.</strong> Its entries stay in their months and are read-only
             here.{' '}
-            <button className="linkish" onClick={() => setEventPhase(event.id, 'spending')}>
+            <button className="linkish" onClick={() => setBucketPhase(bucket.id, 'spending')}>
               Reopen
             </button>
           </div>
@@ -250,9 +250,9 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
           <h2 className="section-label">Ledger</h2>
         </div>
         {entries.length === 0 ? (
-          <EmptyState icon={<IconFlag />} title="Nothing logged yet">
+          <EmptyState icon={<IconBucket />} title="Nothing logged yet">
             <span>
-              {event.phase === 'saving'
+              {bucket.phase === 'saving'
                 ? "Add to the fund and it shows up here, and in that month's budget."
                 : 'Log an expense and it draws the fund down.'}
             </span>
@@ -294,18 +294,18 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
               setConfirmingClose(true);
               return;
             }
-            await setEventPhase(event.id, 'closed');
-            notify('Event closed', { detail: event.name });
+            await setBucketPhase(bucket.id, 'closed');
+            notify('Bucket closed', { detail: bucket.name });
           }}
         >
-          {confirmingClose ? 'Tap again to close it' : 'Close this event'}
+          {confirmingClose ? 'Tap again to close it' : 'Close this bucket'}
         </button>
       )}
 
-      {editing && <EventSheet event={event} onClose={() => setEditing(false)} />}
+      {editing && <BucketSheet bucket={bucket} onClose={() => setEditing(false)} />}
       {contributing && (
         <ContributionSheet
-          event={event}
+          bucket={bucket}
           monthId={thisMonth}
           onClose={() => setContributing(false)}
         />
@@ -313,7 +313,7 @@ export function EventDetail({ eventId, onBack }: { eventId: string; onBack: () =
       {spending && (
         <ExpenseSheet
           monthId={thisMonth}
-          event={event}
+          bucket={bucket}
           confirmLabel="Log to the fund"
           onClose={() => setSpending(false)}
         />

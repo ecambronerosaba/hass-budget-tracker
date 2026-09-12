@@ -9,13 +9,13 @@
  */
 
 import type {
-  BudgetEvent,
+  Bucket,
   Expense,
   Month,
   MonthId,
   RecurringExpense,
 } from '../types/models';
-import { countsAgainstMonth, isContribution } from './event.ts';
+import { countsAgainstMonth, isContribution } from './bucket.ts';
 import {
   daysElapsedInMonth,
   daysInMonth,
@@ -37,8 +37,8 @@ export interface UpcomingRecurring {
 }
 
 /** A monthly set-aside the user has planned but not yet logged (§4.3). */
-export interface UpcomingEventContribution {
-  event: BudgetEvent;
+export interface UpcomingBucketContribution {
+  bucket: Bucket;
   /** What's left of this month's planned set-aside. */
   amount: number;
 }
@@ -62,7 +62,7 @@ export interface MonthSummary {
   fractionUsed: number;
 
   upcoming: UpcomingRecurring[];
-  upcomingEvents: UpcomingEventContribution[];
+  upcomingBuckets: UpcomingBucketContribution[];
   upcomingTotal: number;
 
   /** Extrapolated day-to-day spend + all known recurring costs. */
@@ -86,7 +86,7 @@ export interface SummaryInput {
   expenses: Expense[];
   recurring: RecurringExpense[];
   /** Optional: lets the projection see set-asides that are planned but unlogged. */
-  events?: BudgetEvent[];
+  buckets?: Bucket[];
   /** Injectable for tests. */
   now?: string;
 }
@@ -133,25 +133,25 @@ export function dueRecurringNudges(
 }
 
 /**
- * What each saving event still expects this month. A planned set-aside is
+ * What each saving bucket still expects this month. A planned set-aside is
  * known future cost in exactly the way an unposted rent payment is, so it
  * belongs in the projection rather than appearing out of nowhere on the day
  * it's logged. Partial contributions count — only the remainder is expected.
  */
-export function plannedEventContributions(
+export function plannedBucketContributions(
   monthId: MonthId,
-  events: BudgetEvent[],
+  buckets: Bucket[],
   expenses: Expense[],
-): UpcomingEventContribution[] {
-  return events
-    .filter((e) => e.phase === 'saving' && e.monthlyContribution > 0)
-    .map((event) => {
+): UpcomingBucketContribution[] {
+  return buckets
+    .filter((b) => b.phase === 'saving' && b.monthlyContribution > 0)
+    .map((bucket) => {
       const already = sumNet(
         expenses.filter(
-          (e) => e.monthId === monthId && e.eventId === event.id && isContribution(e),
+          (e) => e.monthId === monthId && e.bucketId === bucket.id && isContribution(e),
         ),
       );
-      return { event, amount: round2(Math.max(0, event.monthlyContribution - already)) };
+      return { bucket, amount: round2(Math.max(0, bucket.monthlyContribution - already)) };
     })
     .filter((u) => u.amount > 0);
 }
@@ -160,14 +160,14 @@ export function summarizeMonth({
   month,
   expenses,
   recurring,
-  events = [],
+  buckets = [],
   now = today(),
 }: SummaryInput): MonthSummary {
   const { year, month: m } = splitMonthId(month.id);
-  // The month's budget is made of everything except event spending — that was
-  // already budgeted in the month it was set aside. `expenses` still carries
-  // it, because the ledger and reconciliation need the whole picture; only the
-  // arithmetic below narrows.
+  // The month's budget is made of everything except bucket spending — that
+  // was already budgeted in the month it was set aside. `expenses` still
+  // carries it, because the ledger and reconciliation need the whole picture;
+  // only the arithmetic below narrows.
   const counted = expenses.filter(countsAgainstMonth);
   const daysTotal = daysInMonth(year, m);
   const daysElapsed = daysElapsedInMonth(month.id, now);
@@ -181,10 +181,10 @@ export function summarizeMonth({
   const reimbursed = round2(sumGross(counted) - spent);
 
   const upcoming = upcomingRecurring(month, recurring, now);
-  const upcomingEvents = plannedEventContributions(month.id, events, expenses);
+  const upcomingBuckets = plannedBucketContributions(month.id, buckets, expenses);
   const upcomingTotal = sumAmounts([
     ...upcoming.map((u) => u.recurring.amount),
-    ...upcomingEvents.map((u) => u.amount),
+    ...upcomingBuckets.map((u) => u.amount),
   ]);
 
   // Day-to-day spend excludes anything logged from a recurring template, so
@@ -230,7 +230,7 @@ export function summarizeMonth({
     fractionElapsed,
     fractionUsed: month.budgetTotal > 0 ? spent / month.budgetTotal : 0,
     upcoming,
-    upcomingEvents,
+    upcomingBuckets,
     upcomingTotal,
     projectedTotal,
     projectedDelta,

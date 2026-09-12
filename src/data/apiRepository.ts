@@ -2,7 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
-  BudgetEvent,
+  Bucket,
   Category,
   Expense,
   Month,
@@ -11,6 +11,7 @@ import type {
   RecurringExpense,
 } from '../types/models';
 import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './seed';
+import { migrateBackup, migrateRepoData, needsBucketMigration } from '../lib/migrate';
 
 /** The `data` half of the document, per docs/api-contract.md. */
 interface RepoData {
@@ -18,7 +19,7 @@ interface RepoData {
   expenses: Expense[];
   categories: Category[];
   recurring: RecurringExpense[];
-  events: BudgetEvent[];
+  buckets: Bucket[];
   sessions: ReconciliationSession[];
   settings: AppSettings | null;
 }
@@ -29,7 +30,7 @@ function emptyData(): RepoData {
     expenses: [],
     categories: [],
     recurring: [],
-    events: [],
+    buckets: [],
     sessions: [],
     settings: null,
   };
@@ -121,6 +122,12 @@ export class ApiRepository implements BudgetRepository {
     this.rev = body.rev;
     this.cached = body.data;
     this.ready = true;
+
+    // v1.5.0 wrote `events`; migrate the whole document once, on the way in,
+    // so nothing below this line ever has to know the old name.
+    if (needsBucketMigration(this.cached as never)) {
+      await this.commit((d) => migrateRepoData(d as never) as never);
+    }
 
     // A fresh server returns rev 0 and empty data — seed the same defaults
     // IndexedDbRepository.init() seeds locally, in one write rather than two.
@@ -253,18 +260,18 @@ export class ApiRepository implements BudgetRepository {
   }
 
   /* `?? []` on every read and write below: a document written by a build that
-   * predates event budgets has no `events` key at all, and the first read of
-   * it must not throw. */
-  async listEvents(): Promise<BudgetEvent[]> {
-    return [...(this.data.events ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+   * predates buckets has no `buckets` key at all, and the first read of it
+   * must not throw. */
+  async listBuckets(): Promise<Bucket[]> {
+    return [...(this.data.buckets ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async saveEvent(event: BudgetEvent): Promise<void> {
-    await this.commit((d) => ({ ...d, events: upsertBy(d.events ?? [], event, (e) => e.id) }));
+  async saveBucket(bucket: Bucket): Promise<void> {
+    await this.commit((d) => ({ ...d, buckets: upsertBy(d.buckets ?? [], bucket, (e) => e.id) }));
   }
 
-  async deleteEvent(id: string): Promise<void> {
-    await this.commit((d) => ({ ...d, events: (d.events ?? []).filter((e) => e.id !== id) }));
+  async deleteBucket(id: string): Promise<void> {
+    await this.commit((d) => ({ ...d, buckets: (d.buckets ?? []).filter((e) => e.id !== id) }));
   }
 
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
@@ -286,13 +293,13 @@ export class ApiRepository implements BudgetRepository {
     const d = this.data;
     return {
       format: 'budget-tracker-backup',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       months: d.months,
       expenses: d.expenses,
       categories: d.categories,
       recurring: d.recurring,
-      events: d.events ?? [],
+      buckets: d.buckets ?? [],
       sessions: d.sessions,
       settings: d.settings ?? DEFAULT_SETTINGS,
     };
@@ -302,14 +309,15 @@ export class ApiRepository implements BudgetRepository {
     // Ignores the data currently in `d` on purpose: a restore replaces
     // everything, so re-applying it after a 409 must produce the same result
     // regardless of what the server's concurrent write changed.
+    const migrated = migrateBackup(backup);
     const next: RepoData = {
-      months: backup.months ?? [],
-      expenses: backup.expenses ?? [],
-      categories: backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES,
-      recurring: backup.recurring ?? [],
-      events: backup.events ?? [],
-      sessions: backup.sessions ?? [],
-      settings: backup.settings ?? DEFAULT_SETTINGS,
+      months: migrated.months ?? [],
+      expenses: migrated.expenses ?? [],
+      categories: migrated.categories?.length ? migrated.categories : DEFAULT_CATEGORIES,
+      recurring: migrated.recurring ?? [],
+      buckets: migrated.buckets ?? [],
+      sessions: migrated.sessions ?? [],
+      settings: migrated.settings ?? DEFAULT_SETTINGS,
     };
     await this.commit(() => next);
   }

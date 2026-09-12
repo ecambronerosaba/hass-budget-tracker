@@ -10,6 +10,7 @@ import {
   today,
 } from '../lib/dates';
 import { partitionBulkRows, type BulkRow } from '../lib/bulkExpense';
+import { bucketForDate } from '../lib/bucket';
 import { newId } from '../lib/id';
 import { sumAmounts } from '../lib/money';
 import { useApp } from '../state/store';
@@ -45,10 +46,22 @@ export function BulkExpenseSheet({
   monthId: string;
   onClose: () => void;
 }) {
-  const { categories, settings, expenses, addExpenses, notify, isLocked } = useApp();
+  const { categories, settings, buckets, expenses, addExpenses, notify, isLocked } = useApp();
   const money = useMoneyFormatter();
 
   const active = useMemo(() => categories.filter((c) => !c.archived), [categories]);
+
+  const openBuckets = useMemo(() => buckets.filter((b) => b.phase !== 'closed'), [buckets]);
+  // 'auto' resolves each row against its own date; a bucket id or null forces
+  // the whole batch. A per-row picker would make the grid unreadable.
+  const [batchBucket, setBatchBucket] = useState<'auto' | string | null>('auto');
+
+  const bucketForRow = (rowDate: ISODate) =>
+    batchBucket === 'auto'
+      ? bucketForDate(rowDate, buckets)
+      : batchBucket === null
+        ? null
+        : openBuckets.find((b) => b.id === batchBucket) ?? null;
 
   // Same rule the single sheet uses: today only when the month being viewed is
   // the live one, otherwise the last day of it, so a row doesn't silently jump
@@ -120,7 +133,13 @@ export function BulkExpenseSheet({
 
     const ready = parts.ready;
     const { created, error } = await addExpenses(
-      ready.map((r) => ({ monthId: r.monthId, input: r.input })),
+      ready.map((r) => {
+        const b = bucketForRow(r.input.date);
+        return {
+          monthId: r.monthId,
+          input: { ...r.input, bucketId: b?.id ?? null, bucketKind: b ? ('spend' as const) : undefined },
+        };
+      }),
     );
 
     // The store writes rows in order, so `created` is the prefix of `ready`
@@ -172,6 +191,47 @@ export function BulkExpenseSheet({
           />
         </Field>
 
+        {openBuckets.length > 0 && (
+          <Field label="Counts against">
+            <div className="chiprow">
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={batchBucket === 'auto'}
+                onClick={() => setBatchBucket('auto')}
+              >
+                Auto by date
+              </button>
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={batchBucket === null}
+                onClick={() => setBatchBucket(null)}
+              >
+                This month
+              </button>
+              {openBuckets.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className="chip"
+                  aria-pressed={batchBucket === b.id}
+                  onClick={() => setBatchBucket(b.id)}
+                >
+                  <span
+                    className="chip__dot"
+                    style={{
+                      background: categories.find((c) => c.id === b.category)?.color
+                        ?? 'var(--text-tertiary)',
+                    }}
+                  />
+                  {b.name}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+
         <datalist id="bulk-description-suggestions">
           {descriptionSuggestions.map((d) => (
             <option key={d} value={d} />
@@ -184,6 +244,8 @@ export function BulkExpenseSheet({
             const lockedRow = submitted && parts.locked.includes(index);
             const landsElsewhere =
               !showError && isValidISODate(row.date) && monthIdOf(row.date) !== monthId;
+            const rowBucket =
+              !showError && isValidISODate(row.date) ? bucketForRow(row.date) : null;
             return (
               <div className="bulkrow" key={row.id}>
                 <div className="bulkrow__top">
@@ -254,6 +316,9 @@ export function BulkExpenseSheet({
                   <span className="stat__note">
                     Lands in {monthLabel(monthIdOf(row.date))}, not {monthLabel(monthId)}.
                   </span>
+                )}
+                {rowBucket && (
+                  <span className="stat__note">→ {rowBucket.name}</span>
                 )}
               </div>
             );

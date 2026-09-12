@@ -20,7 +20,8 @@ node scripts/verify-integration.mjs http://localhost:4173 # focus, contrast, und
 node scripts/verify-close-gate.mjs http://localhost:4173  # can't close an unreviewed month
 node scripts/verify-swipe-reset.mjs http://localhost:4173 # aborted swipe restores the card
 node scripts/verify-bulk-add.mjs http://localhost:4173    # bulk entry skips blanks, blocks partials, routes by date
-node scripts/verify-event-budget.mjs http://localhost:4173 # contributions hit the month, event spending doesn't
+node scripts/verify-bucket-budget.mjs http://localhost:4173 # contributions hit the month, bucket spending doesn't
+node scripts/verify-bucket-migration.mjs http://localhost:4173 # v1.5 "event" data survives the rename
 ```
 
 The `verify-*` scripts each pin a bug that shipped once. They assert behaviour the happy-path
@@ -34,10 +35,11 @@ src/
   types/models.ts        Domain types — plain JSON shapes, ready to travel over a wire
   data/                  Storage seam: repository interface + IndexedDB and in-memory impls
   lib/                   Pure logic: money, dates, projection, CSV import, reconciliation
-  lib/event.ts           The one rule: what an event's fund is, and what a month counts
+  lib/bucket.ts          The one rule: what a bucket's fund is, and what a month counts
+  lib/migrate.ts         Renames stored "event" data to buckets, once, on the way in
   state/store.tsx        One store over the repository; screens never touch storage directly
   components/            Sheets, swipe card, meters, icons, category breakdown
-  screens/               Dashboard, expenses, events, reconcile (import + two queues), history, settings
+  screens/               Dashboard, expenses, buckets, reconcile (import + two queues), history, settings
 ```
 
 Two rules keep it honest:
@@ -64,7 +66,7 @@ reconciliation.
 | Statement import and exact auto-match (§4.5) | `lib/csv.ts`, `lib/reconcile.ts` |
 | Swipe review, two separate queues (§4.6) | `screens/reconcile/` |
 | History, read-only past months (§4.7) | `screens/HistoryScreen.tsx` |
-| Event budgets — save for a trip, then spend from it | `lib/event.ts`, `screens/EventsScreen.tsx`, `screens/EventDetail.tsx` |
+| Buckets — save for a trip or a thing, then spend from it | `lib/bucket.ts`, `screens/BucketsScreen.tsx`, `screens/BucketDetail.tsx` |
 | JSON export / restore (§6) | Settings → Backup |
 | Remembered UI state | `Preferences` in `types/models.ts`, `setPreference` in the store |
 
@@ -109,17 +111,21 @@ The gross is what reconciliation matches on, and that is the point of keeping bo
 says $175, so the dinner auto-matches cleanly, while the month is only $25 poorer for it. A
 reimbursement is clamped to the charge — you can't get back more than you paid.
 
-### Event budgets
+### Buckets
 
-Some budgets aren't months. A trip, a wedding, a laptop — you save for it over a while and
-then spend it down. An **event** owns a fund, and two kinds of money move through it.
+Some budgets aren't months. A trip, a wedding, new golf clubs — you save for it over a while
+and then spend it down. A **bucket** owns a fund, and two kinds of money move through it.
+
+A bucket doesn't need a date. A trip has one; new golf clubs doesn't. When a bucket *does*
+carry a start and an end, anything you log inside that range is pointed at it automatically —
+shown on the form, and one tap to send it back to the month instead.
 
 The whole feature rests on one rule:
 
-> **Money you set aside counts against the month you set it aside in. Money you spend on the
-> event counts against nothing — it was already budgeted when you saved it.**
+> **Money you set aside counts against the month you set it aside in. Money you spend from the
+> bucket counts against nothing — it was already budgeted when you saved it.**
 
-That is what makes an event both separate from the monthly budget and a line item in it. A
+That is what makes a bucket both separate from the monthly budget and a line item in it. A
 $400 monthly set-aside for a Japan trip is $400 September can't spend, and it appears in
 September's ledger like any other expense. The $250 dinner in Kyoto six months later draws
 the fund down and leaves March's budget alone, because September already paid for it.
@@ -127,21 +133,21 @@ the fund down and leaves March's budget alone, because September already paid fo
 Someone who just wants a trip inside one month doesn't need a second mode: contribute the
 whole amount once, then spend from it. Same model, one contribution instead of six.
 
-Spending past the fund isn't silently absorbed. The event states the unfunded amount and
+Spending past the fund isn't silently absorbed. The bucket states the unfunded amount and
 offers one action — **Cover from this month** — which logs a contribution for exactly that
 much into the current month. Money reaches a month's budget once, and only when you say so.
 
-Contributions and event spending are ordinary `Expense` records tagged with an `eventId`, so
+Contributions and bucket spending are ordinary `Expense` records tagged with a `bucketId`, so
 both still appear in the month's ledger and both still reach reconciliation — the statement
 carries a transfer to savings and a dinner in Kyoto alike. The only thing the tag changes is
 which of them the month's budget arithmetic counts, and that decision lives in exactly one
-predicate (`countsAgainstMonth` in `lib/event.ts`).
+predicate (`countsAgainstMonth` in `lib/bucket.ts`).
 
 A planned monthly set-aside is counted in the month's projection until it's logged, the same
 way an unposted rent payment is — otherwise a $400/month plan is invisible to the number
 that tells you whether the month lands on budget.
 
-An event with entries can't be deleted, only closed. Untagging its expenses would silently
+A bucket with entries can't be deleted, only closed. Untagging its expenses would silently
 change the totals of months that may already be reconciled and locked; deleting them would
 destroy reconciled history.
 
@@ -254,6 +260,6 @@ a bump, give it a non-conventional subject (`--no-verify` won't help — it skip
 ## Known limits (v1, by design)
 
 No accounts, no sync, no bank integration, no fuzzy auto-matching, and no per-category caps —
-inside an event or out of one, categories stay for insight rather than sub-budgets. Data
+inside a bucket or out of one, categories stay for insight rather than sub-budgets. Data
 lives in one browser on one device — the JSON export in Settings is the safety net, and the app
 says so.

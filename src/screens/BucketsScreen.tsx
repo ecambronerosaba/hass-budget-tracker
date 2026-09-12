@@ -1,25 +1,26 @@
 import { useMemo, useState } from 'react';
-import { EventDetail } from './EventDetail';
-import { EventSheet } from '../components/EventSheet';
-import { IconFlag } from '../components/Icons';
+import { BucketDetail } from './BucketDetail';
+import { BucketSheet } from '../components/BucketSheet';
+import { IconBucket } from '../components/Icons';
 import { EmptyState, Money, SectionHeading, useMoneyFormatter } from '../components/ui';
-import { summarizeEvent } from '../lib/event';
-import type { BudgetEvent } from '../types/models';
+import { summarizeBucket } from '../lib/bucket';
+import type { Bucket } from '../types/models';
 import { useApp, useCategoryMap } from '../state/store';
 
-const PHASE_LABEL: Record<BudgetEvent['phase'], string> = {
+const PHASE_LABEL: Record<Bucket['phase'], string> = {
   saving: 'Saving',
   spending: 'Spending',
   closed: 'Closed',
 };
 
 /**
- * Budgets that aren't months: a trip, a wedding, a laptop. Same drill-in
- * shape as History — a list here, one thing at a time in the detail — because
- * an event is read one at a time and the list is only ever a few rows long.
+ * Budgets that aren't months: a trip, a wedding, new golf clubs. Same
+ * drill-in shape as History — a list here, one thing at a time in the detail
+ * — because a bucket is read one at a time and the list is only ever a few
+ * rows long.
  */
-export function EventsScreen() {
-  const { events, expenses } = useApp();
+export function BucketsScreen() {
+  const { buckets, expenses } = useApp();
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
   const [open, setOpen] = useState<string | null>(null);
@@ -27,49 +28,48 @@ export function EventsScreen() {
 
   const rows = useMemo(
     () =>
-      events.map((event) => ({
-        event,
-        summary: summarizeEvent({
-          event,
-          expenses: expenses.filter((e) => e.eventId === event.id),
+      buckets.map((bucket) => ({
+        bucket,
+        summary: summarizeBucket({
+          bucket,
+          expenses: expenses.filter((e) => e.bucketId === bucket.id),
         }),
       })),
-    [events, expenses],
+    [buckets, expenses],
   );
 
-  const active = rows.filter((r) => r.event.phase !== 'closed');
-  const closed = rows.filter((r) => r.event.phase === 'closed');
+  const active = rows.filter((r) => r.bucket.phase !== 'closed');
+  const closed = rows.filter((r) => r.bucket.phase === 'closed');
 
   if (open) {
-    // An event deleted out from under this view falls back to the list rather
+    // A bucket deleted out from under this view falls back to the list rather
     // than rendering a blank detail screen.
-    if (!rows.some((r) => r.event.id === open)) {
+    if (!rows.some((r) => r.bucket.id === open)) {
       setOpen(null);
       return null;
     }
-    return <EventDetail eventId={open} onBack={() => setOpen(null)} />;
+    return <BucketDetail bucketId={open} onBack={() => setOpen(null)} />;
   }
 
   return (
     <div className="stack" style={{ ['--gap' as string]: 'var(--s-4)' }}>
       <div className="row row--between" style={{ gap: 'var(--s-3)', alignItems: 'flex-start' }}>
         <div>
-          <div className="section-label">Events</div>
+          <div className="section-label">Buckets</div>
           <p className="muted" style={{ fontSize: 'var(--t-small)', marginTop: 4 }}>
             A budget that isn't a month. Save toward it, then spend from it.
           </p>
         </div>
         <button className="btn btn--primary btn--sm" onClick={() => setCreating(true)}>
-          New event
+          New bucket
         </button>
       </div>
 
       {rows.length === 0 ? (
         <section className="card">
-          <EmptyState icon={<IconFlag />} title="No events yet">
+          <EmptyState icon={<IconBucket />} title="No buckets yet">
             <span>
-              A trip, a wedding, a new laptop — anything you save for over more than one
-              month.
+              A trip, a wedding, new golf clubs — anything you save up for separately.
             </span>
           </EmptyState>
         </section>
@@ -77,30 +77,30 @@ export function EventsScreen() {
         active.length > 0 && (
           <section className="card card--flush">
             <div className="list">
-              {active.map(({ event, summary }) => (
-                <EventRow
-                  key={event.id}
-                  event={event}
+              {active.map(({ bucket, summary }) => (
+                <BucketRow
+                  key={bucket.id}
+                  bucket={bucket}
                   fraction={
-                    event.phase === 'spending' ? summary.fractionSpent : summary.fractionSaved
+                    bucket.phase === 'spending' ? summary.fractionSpent : summary.fractionSaved
                   }
-                  color={categories.get(event.category)?.color ?? 'var(--text-tertiary)'}
+                  color={categories.get(bucket.category)?.color ?? 'var(--text-tertiary)'}
                   sub={
-                    event.phase === 'spending'
-                      ? `${PHASE_LABEL[event.phase]} · ${money(summary.spent)} of ${money(
+                    bucket.phase === 'spending'
+                      ? `${PHASE_LABEL[bucket.phase]} · ${money(summary.spent)} of ${money(
                           summary.saved,
                           { compact: true },
                         )} in the fund`
-                      : `${PHASE_LABEL[event.phase]} · ${money(summary.saved)} of ${money(
+                      : `${PHASE_LABEL[bucket.phase]} · ${money(summary.saved)} of ${money(
                           summary.target,
                           { compact: true },
                         )}`
                   }
                   amount={
-                    event.phase === 'spending' ? summary.fundRemaining : summary.targetRemaining
+                    bucket.phase === 'spending' ? summary.fundRemaining : summary.targetRemaining
                   }
-                  amountNote={event.phase === 'spending' ? 'left in fund' : 'still to save'}
-                  onOpen={() => setOpen(event.id)}
+                  amountNote={bucket.phase === 'spending' ? 'left in fund' : 'still to save'}
+                  onOpen={() => setOpen(bucket.id)}
                 />
               ))}
             </div>
@@ -113,18 +113,18 @@ export function EventsScreen() {
           <SectionHeading title="Closed" />
           <section className="card card--flush">
             <div className="list">
-              {closed.map(({ event, summary }) => (
-                <EventRow
-                  key={event.id}
-                  event={event}
+              {closed.map(({ bucket, summary }) => (
+                <BucketRow
+                  key={bucket.id}
+                  bucket={bucket}
                   fraction={summary.fractionSpent}
-                  color={categories.get(event.category)?.color ?? 'var(--text-tertiary)'}
+                  color={categories.get(bucket.category)?.color ?? 'var(--text-tertiary)'}
                   sub={`Closed · ${money(summary.spent)} spent of ${money(summary.saved, {
                     compact: true,
                   })} saved`}
                   amount={summary.fundRemaining}
                   amountNote="left over"
-                  onOpen={() => setOpen(event.id)}
+                  onOpen={() => setOpen(bucket.id)}
                 />
               ))}
             </div>
@@ -133,7 +133,7 @@ export function EventsScreen() {
       )}
 
       {creating && (
-        <EventSheet
+        <BucketSheet
           onClose={() => setCreating(false)}
           onCreated={(id) => {
             setCreating(false);
@@ -145,8 +145,8 @@ export function EventsScreen() {
   );
 }
 
-function EventRow({
-  event,
+function BucketRow({
+  bucket,
   fraction,
   color,
   sub,
@@ -154,7 +154,7 @@ function EventRow({
   amountNote,
   onOpen,
 }: {
-  event: BudgetEvent;
+  bucket: Bucket;
   fraction: number;
   color: string;
   sub: string;
@@ -165,14 +165,14 @@ function EventRow({
   const money = useMoneyFormatter();
   return (
     <button
-      className="list__item eventrow"
+      className="list__item bucketrow"
       onClick={onOpen}
-      aria-label={`${event.name}, ${sub}, ${money(amount)} ${amountNote}`}
+      aria-label={`${bucket.name}, ${sub}, ${money(amount)} ${amountNote}`}
     >
       <span className="dot" style={{ background: color }} />
       <span className="list__main">
-        <span className="list__title" style={{ opacity: event.phase === 'closed' ? 0.6 : 1 }}>
-          {event.name}
+        <span className="list__title" style={{ opacity: bucket.phase === 'closed' ? 0.6 : 1 }}>
+          {bucket.name}
         </span>
         <span className="list__sub">
           <span>{sub}</span>

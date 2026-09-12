@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { BudgetEvent, ISODate, MonthId } from '../types/models';
+import type { Bucket, ISODate, MonthId } from '../types/models';
 import { currentMonthId, expectedDateFor, monthIdOf, monthLabel, today } from '../lib/dates';
 import { parseAmount } from '../lib/money';
 import { useApp } from '../state/store';
@@ -7,16 +7,16 @@ import { Field, Sheet, useMoneyFormatter } from './ui';
 
 /**
  * Money into the fund. Deliberately smaller than the expense form: no
- * category (it comes from the event), no split, no recurring — amount, date,
+ * category (it comes from the bucket), no split, no recurring — amount, date,
  * done. What it does say plainly is the consequence, because this is the one
- * place where an event touches a month's budget.
+ * place where a bucket touches a month's budget.
  */
 export function ContributionSheet({
-  event,
+  bucket,
   monthId,
   onClose,
 }: {
-  event: BudgetEvent;
+  bucket: Bucket;
   monthId: MonthId;
   onClose: () => void;
 }) {
@@ -24,12 +24,12 @@ export function ContributionSheet({
   const money = useMoneyFormatter();
 
   const [amountText, setAmountText] = useState(
-    event.monthlyContribution > 0 ? String(event.monthlyContribution) : '',
+    bucket.monthlyContribution > 0 ? String(bucket.monthlyContribution) : '',
   );
   const [date, setDate] = useState<ISODate>(
     monthId === currentMonthId() ? today() : expectedDateFor(monthId, 31),
   );
-  const [description, setDescription] = useState(`${event.name} fund`);
+  const [description, setDescription] = useState(`${bucket.name} fund`);
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -50,10 +50,10 @@ export function ContributionSheet({
       await addExpense(targetMonthId, {
         date,
         amount: amount as number,
-        category: event.category,
-        description: description.trim() || `${event.name} fund`,
-        eventId: event.id,
-        eventKind: 'contribution',
+        category: bucket.category,
+        description: description.trim() || `${bucket.name} fund`,
+        bucketId: bucket.id,
+        bucketKind: 'contribution',
       });
       notify(`${money(amount as number)} set aside`, {
         detail: `Counted against ${monthLabel(targetMonthId, { year: false })}.`,
@@ -65,7 +65,7 @@ export function ContributionSheet({
   };
 
   return (
-    <Sheet title={`Add to ${event.name}`} onClose={onClose}>
+    <Sheet title={`Add to ${bucket.name}`} onClose={onClose}>
       <form onSubmit={submit} className="stack" style={{ ['--gap' as string]: 'var(--s-4)' }}>
         <div className="field">
           <label className="field__label" htmlFor="contrib-amount">

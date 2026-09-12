@@ -162,10 +162,10 @@ export const IconLink = (p: Props) => (
   </Svg>
 );
 
-export const IconFlag = (p: Props) => (
+export const IconBucket = (p: Props) => (
   <Svg {...p}>
-    <path d="M6 21V4" />
-    <path d="M6 4.5h11l-2 3.5 2 3.5H6" />
+    <path d="M5 8h14l-1.3 11.1a1 1 0 0 1-1 .9H7.3a1 1 0 0 1-1-.9z" />
+    <path d="M8.5 8a3.5 3.5 0 0 1 7 0" />
   </Svg>
 );
 

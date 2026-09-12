@@ -45,9 +45,9 @@ function emptyData() {
     categories: [],
     recurring: [],
     // Not in DATA_KEYS on purpose: requiring a seventh key would 400 a PUT
-    // from a client built before event budgets. The document is stored
-    // verbatim either way, so the key round-trips without being validated.
-    events: [],
+    // from a client built before buckets. The document is stored verbatim
+    // either way, so the key round-trips without being validated.
+    buckets: [],
     sessions: [],
     settings: null,
   };

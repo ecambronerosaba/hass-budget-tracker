@@ -28,11 +28,14 @@ npm run build:addon   # npm run build, then refresh budget-server/www/ from dist
   (`src/lib/money.ts`).
 - Closed months are enforced in the store (`isLocked` gates `updateExpense` / `deleteExpense` / `setBudget`),
   not just hidden in screens.
-- Event budgets are not a second ledger: a contribution and an event expense are ordinary `Expense` rows
-  tagged `eventId` + `eventKind`. The **only** thing the tag changes is budget arithmetic, through one
-  predicate — `countsAgainstMonth` (`src/lib/event.ts`). Contributions count against their month (that's the
-  "line item in the monthly budget"); `eventKind: 'spend'` never does. Reconciliation is deliberately
-  untouched by it — the statement carries both. An event with entries can be closed, never deleted.
+- Buckets are not a second ledger: a contribution and a bucket expense are ordinary `Expense` rows
+  tagged `bucketId` + `bucketKind`. The **only** thing the tag changes is budget arithmetic, through one
+  predicate — `countsAgainstMonth` (`src/lib/bucket.ts`). Contributions count against their month (that's the
+  "line item in the monthly budget"); `bucketKind: 'spend'` never does. Reconciliation is deliberately
+  untouched by it — the statement carries both. A bucket with entries can be closed, never deleted.
+  A bucket with both a start and an end date claims expenses dated inside it (`bucketForDate`), but only
+  at the UI entry points where a person logs a discretionary expense — never from the store, so recurring
+  and reconciliation paths are unaffected.
 
 ## Two deployments, one build
 
@@ -133,9 +136,9 @@ touching UI. Source: `src/styles/tokens.css`, `src/styles/app.css`, `src/compone
   headline → 38px.
 - Fixed bottom tab bar: `grid repeat(6,1fr)`, 20px icons, `--t-micro` labels, inactive `--text-tertiary`,
   active `--blue` + `aria-current="page"`. Respects `env(safe-area-inset-bottom)`. Tabs: Month, Expenses,
-  Events, Reconcile, History, Settings.
+  Buckets, Reconcile, History, Settings.
 - FAB: 54px `--blue` pill, 24px `--text-inverse` plus, `--shadow-float`, `:active` scale 0.94; offset-clamped
-  to hug the 680 column edge. **Shown only when the month is open AND the screen is neither Reconcile nor Events**
+  to hug the 680 column edge. **Shown only when the month is open AND the screen is neither Reconcile nor Buckets**
   (both carry their own primary buttons).
 - Breakpoints: 640 (sheets → centered dialogs) and 420 (column padding + headline). That's all.
 

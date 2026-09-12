@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import type { BudgetEvent, Expense, ISODate } from '../types/models';
+import type { Bucket, Expense, ISODate } from '../types/models';
 import { FALLBACK_CATEGORY_ID } from '../data/seed';
 import {
   currentMonthId,
@@ -11,7 +11,7 @@ import {
   today,
 } from '../lib/dates';
 import { clampReimbursement } from '../lib/expense';
-import { countsAgainstMonth } from '../lib/event';
+import { bucketForDate, countsAgainstMonth } from '../lib/bucket';
 import { parseAmount, round2 } from '../lib/money';
 import { sumNet } from '../lib/expense';
 import { useApp, useMonth, useMonthExpenses } from '../state/store';
@@ -35,7 +35,7 @@ export function ExpenseSheet({
   monthId,
   expense,
   prefill,
-  event,
+  bucket,
   title,
   confirmLabel = 'Save expense',
   allowDelete = true,
@@ -45,8 +45,10 @@ export function ExpenseSheet({
   monthId: string;
   expense?: Expense;
   prefill?: ExpensePrefill;
-  /** When set, this is spending from the event's fund, not from the month. */
-  event?: BudgetEvent;
+  /** When set, this is spending from the bucket's fund, not from the month —
+   *  the sheet was opened from that bucket's detail screen. The picker below
+   *  is what actually decides the tag; this only seeds its initial value. */
+  bucket?: Bucket;
   title?: string;
   confirmLabel?: string;
   allowDelete?: boolean;
@@ -64,6 +66,7 @@ export function ExpenseSheet({
   const {
     categories,
     settings,
+    buckets,
     addExpense,
     updateExpense,
     deleteExpense,
@@ -122,10 +125,36 @@ export function ExpenseSheet({
       // belongs.
       (monthId === currentMonthId() ? today() : expectedDateFor(monthId, 31)),
   );
+
+  // Buckets worth offering: the open ones, plus whichever one an expense being
+  // edited is already tagged to, so a closed bucket's tag stays visible and
+  // removable rather than silently disappearing from the form.
+  const pickable = useMemo(
+    () => buckets.filter((b) => b.phase !== 'closed' || b.id === expense?.bucketId),
+    [buckets, expense?.bucketId],
+  );
+
+  // What the date claims. Recomputed as the date field changes, so moving an
+  // expense into a trip week updates the suggestion live.
+  const matched = useMemo(
+    () => (expense ? null : bucketForDate(date, buckets)),
+    [expense, date, buckets],
+  );
+
+  const [bucketId, setBucketId] = useState<string | null>(
+    expense?.bucketId ?? bucket?.id ?? null,
+  );
+  // The user's own choice always wins; the date only drives the default, and
+  // only until they touch the row.
+  const [bucketTouched, setBucketTouched] = useState(false);
+  const effectiveBucketId = bucketTouched ? bucketId : bucketId ?? matched?.id ?? null;
+  const selectedBucket = pickable.find((b) => b.id === effectiveBucketId) ?? null;
+  const autoMatched = !bucketTouched && !bucketId && matched !== null;
+
   const [category, setCategory] = useState(
     expense?.category ??
       prefill?.category ??
-      event?.category ??
+      bucket?.category ??
       settings.lastUsedCategory ??
       FALLBACK_CATEGORY_ID,
   );
@@ -162,8 +191,8 @@ export function ExpenseSheet({
   // existing row, not when a caller (reconciliation, the recurring "log a
   // different amount" sheet) has taken over saving, and not when the date
   // field points the entry at a closed month.
-  // A trip dinner is not a monthly bill, so event spending never offers it.
-  const canMakeRecurring = !expense && !onSave && !event && !isLocked(targetMonthId);
+  // A trip dinner is not a monthly bill, so a bucket selection never offers it.
+  const canMakeRecurring = !expense && !onSave && !effectiveBucketId && !isLocked(targetMonthId);
 
   const submit = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
@@ -182,15 +211,19 @@ export function ExpenseSheet({
       if (onSave) {
         await onSave(values);
       } else if (expense) {
-        await updateExpense(expense.id, values);
+        await updateExpense(expense.id, {
+          ...values,
+          bucketId: effectiveBucketId,
+          bucketKind: effectiveBucketId ? ('spend' as const) : undefined,
+        });
         notify('Expense updated');
       } else {
         const recurring = canMakeRecurring && makeRecurring;
         const created = await addExpense(targetMonthId, {
           ...values,
           source: recurring ? 'recurring' : undefined,
-          eventId: event?.id,
-          eventKind: event ? 'spend' : undefined,
+          bucketId: effectiveBucketId,
+          bucketKind: effectiveBucketId ? 'spend' : undefined,
         });
         // The expense is logged at this point. If turning it into a template
         // fails, don't strand the sheet open — report it and still close, so a
@@ -216,13 +249,13 @@ export function ExpenseSheet({
         const suffix = recurringRegistered ? ' · now recurring' : '';
         if (recurring && !recurringRegistered) {
           // The failure toast above is the message; skip the routine one.
-        } else if (event) {
-          // Event spending draws the fund down and leaves the month alone, so
+        } else if (selectedBucket) {
+          // Bucket spending draws the fund down and leaves the month alone, so
           // quoting "left this month" here would state the opposite of what
           // just happened.
-          notify(loggedMsg, { detail: `From the ${event.name} fund.` });
+          notify(loggedMsg, { detail: `From the ${selectedBucket.name} fund.` });
         } else if (month && targetMonthId === monthId) {
-          // Event spending already sitting in this month isn't part of its
+          // Bucket spending already sitting in this month isn't part of its
           // budget, so it can't be part of what's left of it either.
           const spent = sumNet([
             ...monthExpenses.filter(countsAgainstMonth),
@@ -257,8 +290,8 @@ export function ExpenseSheet({
     ? locked
       ? 'View expense'
       : 'Edit expense'
-    : event
-      ? `Log to ${event.name}`
+    : bucket
+      ? `Log to ${bucket.name}`
       : // Unmistakable, and it tracks the date field live — browsing a past
         // month and logging into it says so right in the title.
         `Log to ${monthLabel(targetMonthId)}`;
@@ -292,12 +325,6 @@ export function ExpenseSheet({
           </div>
           {touched && !amountValid && (
             <span className="stat__note tone-over">Enter an amount above zero.</span>
-          )}
-          {event && (
-            <span className="stat__note">
-              Spent from the {event.name} fund — this doesn't count against{' '}
-              {monthLabel(targetMonthId, { year: false })}'s budget.
-            </span>
           )}
         </div>
 
@@ -419,6 +446,61 @@ export function ExpenseSheet({
             ))}
           </div>
         </Field>
+
+        {/*
+          Not behind a "+" disclosure, unlike split and recurring: once a
+          person has buckets, where the money lands is a primary choice, not a
+          rare extra. The whole row stays hidden for anyone who has none.
+        */}
+        {pickable.length > 0 && (
+          <Field label="Counts against">
+            <div className="chiprow">
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={effectiveBucketId === null}
+                onClick={() => {
+                  setBucketTouched(true);
+                  setBucketId(null);
+                }}
+                disabled={locked}
+              >
+                This month
+              </button>
+              {pickable.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className="chip"
+                  aria-pressed={effectiveBucketId === b.id}
+                  onClick={() => {
+                    setBucketTouched(true);
+                    setBucketId(b.id);
+                  }}
+                  disabled={locked}
+                >
+                  <span
+                    className="chip__dot"
+                    style={{
+                      background: categories.find((c) => c.id === b.category)?.color
+                        ?? 'var(--text-tertiary)',
+                    }}
+                  />
+                  {b.name}
+                </button>
+              ))}
+            </div>
+            {selectedBucket && (
+              <span className="stat__note">
+                {autoMatched
+                  ? `Dated inside ${selectedBucket.name} — logging to its fund. `
+                  : `Spent from the ${selectedBucket.name} fund. `}
+                This doesn't count against {monthLabel(targetMonthId, { year: false })}'s
+                budget.
+              </span>
+            )}
+          </Field>
+        )}
 
         <Field label="Description" id="expense-description">
           <input

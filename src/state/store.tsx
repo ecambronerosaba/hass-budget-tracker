@@ -19,10 +19,10 @@ import type {
   Preferences,
   BackupFile,
   BankTransaction,
-  BudgetEvent,
+  Bucket,
+  BucketKind,
+  BucketPhase,
   Category,
-  EventKind,
-  EventPhase,
   Expense,
   ExpenseSource,
   ISODate,
@@ -41,7 +41,7 @@ import {
   today,
 } from '../lib/dates';
 import { clampReimbursement } from '../lib/expense';
-import { summarizeEvent, type EventSummary } from '../lib/event';
+import { summarizeBucket, type BucketSummary } from '../lib/bucket';
 import { newId } from '../lib/id';
 import { round2 } from '../lib/money';
 import { autoMatch } from '../lib/reconcile';
@@ -70,16 +70,20 @@ export interface ExpenseInput {
   source?: ExpenseSource;
   reconciliationStatus?: Expense['reconciliationStatus'];
   matchedTransactionId?: string;
-  /** Tags this expense into an event's ledger. */
-  eventId?: string;
-  eventKind?: EventKind;
+  /**
+   * Tags this expense into a bucket's ledger. `null` means "clear the tag" —
+   * `undefined` already means "not provided", so without a separate sentinel
+   * the picker could set a bucket but never take one off.
+   */
+  bucketId?: string | null;
+  bucketKind?: BucketKind;
 }
 
-export interface EventInput {
+export interface BucketInput {
   name: string;
   targetAmount: number;
   category: string;
-  phase?: EventPhase;
+  phase?: BucketPhase;
   startDate?: ISODate;
   endDate?: ISODate;
   monthlyContribution?: number;
@@ -97,7 +101,7 @@ interface AppData {
   months: Month[];
   expenses: Expense[];
   recurring: RecurringExpense[];
-  events: BudgetEvent[];
+  buckets: Bucket[];
   sessions: ReconciliationSession[];
 }
 
@@ -107,7 +111,7 @@ const EMPTY: AppData = {
   months: [],
   expenses: [],
   recurring: [],
-  events: [],
+  buckets: [],
   sessions: [],
 };
 
@@ -169,19 +173,19 @@ export interface AppStore extends AppData {
     draft: RecurringTemplateDraft,
   ) => Promise<void>;
 
-  createEvent: (input: EventInput) => Promise<BudgetEvent>;
-  updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>;
-  setEventPhase: (id: string, phase: EventPhase) => Promise<void>;
+  createBucket: (input: BucketInput) => Promise<Bucket>;
+  updateBucket: (id: string, patch: Partial<BucketInput>) => Promise<void>;
+  setBucketPhase: (id: string, phase: BucketPhase) => Promise<void>;
   /**
-   * Only when the event has no entries. With entries, untagging them would
+   * Only when the bucket has no entries. With entries, untagging them would
    * silently change the totals of months that may already be closed, and
    * deleting them would destroy reconciled history — so the answer is Close.
    */
-  deleteEvent: (id: string) => Promise<void>;
+  deleteBucket: (id: string) => Promise<void>;
   /** Logs a contribution covering what the fund didn't, into `monthId`. */
-  coverFromMonth: (eventId: string, monthId: MonthId, amount: number) => Promise<void>;
-  /** The event's own ledger — contributions and spending alike. */
-  eventExpenses: (eventId: string) => Expense[];
+  coverFromMonth: (bucketId: string, monthId: MonthId, amount: number) => Promise<void>;
+  /** The bucket's own ledger — contributions and spending alike. */
+  bucketExpenses: (bucketId: string) => Expense[];
 
   startReconciliation: (
     monthId: MonthId,
@@ -245,23 +249,25 @@ function buildExpense(monthId: MonthId, input: ExpenseInput): Expense {
     source: input.source ?? 'manual',
     reconciliationStatus: input.reconciliationStatus ?? 'unreconciled',
     matchedTransactionId: input.matchedTransactionId,
-    eventId: input.eventId,
-    // An eventKind with no event would silently take an ordinary expense out
-    // of its month's budget, so the pair is only ever set together.
-    eventKind: input.eventId ? input.eventKind ?? 'spend' : undefined,
+    bucketId: input.bucketId || undefined,
+    // A kind with no bucket would take an ordinary expense out of its month's
+    // budget with nothing on screen to explain why.
+    bucketKind: input.bucketId ? input.bucketKind ?? 'spend' : undefined,
     createdAt: now,
     updatedAt: now,
   };
 }
 
-/** Same pairing rule as `buildExpense`, applied to a partial edit. */
-function normalizedEventKind(
+/** Same pairing rule as `buildExpense`, applied to a partial edit. `null`
+ *  clears the tag; `undefined` leaves whatever the expense already had. */
+function normalizedBucket(
   existing: Expense,
   patch: Partial<ExpenseInput>,
-): Expense['eventKind'] {
-  const eventId = patch.eventId !== undefined ? patch.eventId : existing.eventId;
-  if (!eventId) return undefined;
-  return patch.eventKind ?? existing.eventKind ?? 'spend';
+): { bucketId: string | undefined; bucketKind: Expense['bucketKind'] } {
+  const bucketId =
+    patch.bucketId !== undefined ? patch.bucketId || undefined : existing.bucketId;
+  if (!bucketId) return { bucketId: undefined, bucketKind: undefined };
+  return { bucketId, bucketKind: patch.bucketKind ?? existing.bucketKind ?? 'spend' };
 }
 
 /**
@@ -350,18 +356,18 @@ export function AppProvider({
   const reload = useCallback(async () => {
     const repo = repoRef.current;
     if (!repo) return;
-    const [settings, categories, months, expenses, recurring, events] = await Promise.all([
+    const [settings, categories, months, expenses, recurring, buckets] = await Promise.all([
       repo.getSettings(),
       repo.listCategories(),
       repo.listMonths(),
       repo.listExpenses(),
       repo.listRecurring(),
-      repo.listEvents(),
+      repo.listBuckets(),
     ]);
     const sessions = (
       await Promise.all(months.map((m) => repo.getSession(m.id)))
     ).filter((s): s is ReconciliationSession => s !== null);
-    setData({ settings, categories, months, expenses, recurring, events, sessions });
+    setData({ settings, categories, months, expenses, recurring, buckets, sessions });
   }, []);
 
   useEffect(() => {
@@ -579,7 +585,7 @@ export function AppProvider({
         description: patch.description?.trim() ?? existing.description,
         notes: patch.notes !== undefined ? patch.notes.trim() || undefined : existing.notes,
         monthId: patch.date ? patch.date.slice(0, 7) : existing.monthId,
-        eventKind: normalizedEventKind(existing, patch),
+        ...normalizedBucket(existing, patch),
         updatedAt: new Date().toISOString(),
       };
       if (next.monthId !== existing.monthId) await ensureMonth(next.monthId);
@@ -756,13 +762,13 @@ export function AppProvider({
     [data.recurring, recordConfirmation, reload],
   );
 
-  /* ------------------------------ events ------------------------------- */
+  /* ------------------------------ buckets ------------------------------- */
 
-  const createEvent = useCallback<AppStore['createEvent']>(
+  const createBucket = useCallback<AppStore['createBucket']>(
     async (input) => {
       const now = new Date().toISOString();
-      const event: BudgetEvent = {
-        id: newId('evt'),
+      const bucket: Bucket = {
+        id: newId('bkt'),
         name: input.name.trim(),
         targetAmount: round2(input.targetAmount),
         phase: input.phase ?? 'saving',
@@ -774,18 +780,18 @@ export function AppProvider({
         createdAt: now,
         updatedAt: now,
       };
-      await repo().saveEvent(event);
+      await repo().saveBucket(bucket);
       await reload();
-      return event;
+      return bucket;
     },
     [reload],
   );
 
-  const updateEvent = useCallback<AppStore['updateEvent']>(
+  const updateBucket = useCallback<AppStore['updateBucket']>(
     async (id, patch) => {
-      const existing = data.events.find((e) => e.id === id);
+      const existing = data.buckets.find((b) => b.id === id);
       if (!existing) return;
-      const next: BudgetEvent = {
+      const next: Bucket = {
         ...existing,
         ...patch,
         name: patch.name?.trim() ?? existing.name,
@@ -797,20 +803,21 @@ export function AppProvider({
             : existing.monthlyContribution,
         startDate:
           patch.startDate !== undefined ? patch.startDate || undefined : existing.startDate,
+        endDate: patch.endDate !== undefined ? patch.endDate || undefined : existing.endDate,
         note: patch.note !== undefined ? patch.note.trim() || undefined : existing.note,
         updatedAt: new Date().toISOString(),
       };
-      await repo().saveEvent(next);
+      await repo().saveBucket(next);
       await reload();
     },
-    [data.events, reload],
+    [data.buckets, reload],
   );
 
-  const setEventPhase = useCallback<AppStore['setEventPhase']>(
+  const setBucketPhase = useCallback<AppStore['setBucketPhase']>(
     async (id, phase) => {
-      const existing = data.events.find((e) => e.id === id);
+      const existing = data.buckets.find((b) => b.id === id);
       if (!existing) return;
-      await repo().saveEvent({
+      await repo().saveBucket({
         ...existing,
         phase,
         closedAt: phase === 'closed' ? new Date().toISOString() : undefined,
@@ -818,28 +825,28 @@ export function AppProvider({
       });
       await reload();
     },
-    [data.events, reload],
+    [data.buckets, reload],
   );
 
   /**
-   * Deleting an event that has entries has no good answer: untagging them
+   * Deleting a bucket that has entries has no good answer: untagging them
    * would silently change the totals of months that may already be closed,
    * and deleting them would destroy reconciled history. So it isn't offered —
    * and the guard lives here rather than in the sheet, because a screen that
    * forgets is a screen that lets it happen.
    */
-  const deleteEvent = useCallback<AppStore['deleteEvent']>(
+  const deleteBucket = useCallback<AppStore['deleteBucket']>(
     async (id) => {
-      const tagged = data.expenses.filter((e) => e.eventId === id);
+      const tagged = data.expenses.filter((e) => e.bucketId === id);
       if (tagged.length > 0) {
-        notify('This event has entries', {
+        notify('This bucket has entries', {
           detail: `${tagged.length} ${
             tagged.length === 1 ? 'entry is' : 'entries are'
           } logged against it. Close it instead.`,
         });
         return;
       }
-      await repo().deleteEvent(id);
+      await repo().deleteBucket(id);
       await reload();
     },
     [data.expenses, notify, reload],
@@ -851,9 +858,9 @@ export function AppProvider({
    * once and only when they say so.
    */
   const coverFromMonth = useCallback<AppStore['coverFromMonth']>(
-    async (eventId, monthId, amount) => {
-      const event = data.events.find((e) => e.id === eventId);
-      if (!event || amount <= 0) return;
+    async (bucketId, monthId, amount) => {
+      const bucket = data.buckets.find((b) => b.id === bucketId);
+      if (!bucket || amount <= 0) return;
       if (isLocked(monthId)) {
         notify('That month is closed', { detail: 'Nothing new can be logged to it.' });
         return;
@@ -861,20 +868,20 @@ export function AppProvider({
       await addExpense(monthId, {
         date: monthId === currentMonthId() ? today() : expectedDateFor(monthId, 31),
         amount: round2(amount),
-        category: event.category,
-        description: `${event.name} fund`,
-        eventId: event.id,
-        eventKind: 'contribution',
+        category: bucket.category,
+        description: `${bucket.name} fund`,
+        bucketId: bucket.id,
+        bucketKind: 'contribution',
       });
-      notify(`${event.name} fund topped up`, {
+      notify(`${bucket.name} fund topped up`, {
         detail: `Counted against ${monthLabel(monthId, { year: false })}.`,
       });
     },
-    [addExpense, data.events, isLocked, notify],
+    [addExpense, data.buckets, isLocked, notify],
   );
 
-  const eventExpenses = useCallback<AppStore['eventExpenses']>(
-    (eventId) => data.expenses.filter((e) => e.eventId === eventId),
+  const bucketExpenses = useCallback<AppStore['bucketExpenses']>(
+    (bucketId) => data.expenses.filter((e) => e.bucketId === bucketId),
     [data.expenses],
   );
 
@@ -1093,12 +1100,12 @@ export function AppProvider({
       snoozeRecurring,
       skipRecurring,
       registerRecurringFromExpense,
-      createEvent,
-      updateEvent,
-      setEventPhase,
-      deleteEvent,
+      createBucket,
+      updateBucket,
+      setBucketPhase,
+      deleteBucket,
       coverFromMonth,
-      eventExpenses,
+      bucketExpenses,
       startReconciliation,
       setReconcileStage,
       linkTransaction,
@@ -1116,7 +1123,7 @@ export function AppProvider({
       setBudget, addExpense, addExpenses, updateExpense, deleteExpense, saveCategory, createCategory,
       saveRecurring, createRecurring, deleteRecurring, confirmRecurring, snoozeRecurring,
       skipRecurring, registerRecurringFromExpense,
-      createEvent, updateEvent, setEventPhase, deleteEvent, coverFromMonth, eventExpenses,
+      createBucket, updateBucket, setBucketPhase, deleteBucket, coverFromMonth, bucketExpenses,
       startReconciliation, setReconcileStage, linkTransaction,
       addExpenseFromTransaction, resolveLoggedOnly, finishReconciliation,
       cancelReconciliation, updateSettings, exportBackup, importBackup,
@@ -1155,26 +1162,29 @@ export function useSession(monthId: MonthId): ReconciliationSession | null {
   );
 }
 
-export function useEvent(eventId: string): BudgetEvent | null {
-  const { events } = useApp();
-  return useMemo(() => events.find((e) => e.id === eventId) ?? null, [events, eventId]);
+export function useBucket(bucketId: string): Bucket | null {
+  const { buckets } = useApp();
+  return useMemo(() => buckets.find((b) => b.id === bucketId) ?? null, [buckets, bucketId]);
 }
 
-export function useEventExpenses(eventId: string): Expense[] {
+export function useBucketExpenses(bucketId: string): Expense[] {
   const { expenses } = useApp();
   return useMemo(
     () =>
       expenses
-        .filter((e) => e.eventId === eventId)
+        .filter((e) => e.bucketId === bucketId)
         .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)),
-    [expenses, eventId],
+    [expenses, bucketId],
   );
 }
 
-export function useEventSummary(eventId: string): EventSummary | null {
-  const event = useEvent(eventId);
-  const expenses = useEventExpenses(eventId);
-  return useMemo(() => (event ? summarizeEvent({ event, expenses }) : null), [event, expenses]);
+export function useBucketSummary(bucketId: string): BucketSummary | null {
+  const bucket = useBucket(bucketId);
+  const expenses = useBucketExpenses(bucketId);
+  return useMemo(
+    () => (bucket ? summarizeBucket({ bucket, expenses }) : null),
+    [bucket, expenses],
+  );
 }
 
 export function useCategoryMap(): Map<string, Category> {

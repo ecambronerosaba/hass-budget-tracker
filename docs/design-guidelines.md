@@ -250,15 +250,18 @@ Defined in `src/App.tsx` and the `.app*` rules of `app.css`.
   to `--s-3` and the dashboard headline shrinks to `38px` (`app.css:1091`).
 - **Fixed bottom tab bar** (`.tabbar` / `.tabbar__inner` / `.tab` `app.css:135`): fixed, `z-index: 30`,
   `--bg` background with a 1px `--hairline` top border, `padding-bottom: env(safe-area-inset-bottom)`. Inner is
-  a `grid` of `repeat(5, 1fr)`, capped at 680px. Each tab is a column: 20px icon over an `--t-micro` label at
+  a `grid` of `repeat(6, 1fr)`, capped at 680px. Each tab is a column: 20px icon over an `--t-micro` label at
   `letter-spacing: 0.02em`. Inactive `--text-tertiary`; the active tab is `--blue` and carries
-  `aria-current="page"`. Tabs in order: **Month, Expenses, Reconcile, History, Settings** (`App.tsx:22`).
+  `aria-current="page"`. Tabs in order: **Month, Expenses, Events, Reconcile, History, Settings**
+  (`App.tsx:22`). At the 430px design viewport six columns come out at ~71px each, which holds the 20px icon
+  over the longest label ("Expenses") without wrapping.
 - **FAB** (`.fab` `app.css:175`): fixed, `z-index: 35`, a 54px `--r-pill` `--blue` circle with a 24px
   `--text-inverse` `IconPlus`, `--shadow-float`, `:active { transform: scale(0.94) }`. `bottom` is
   `calc(76px + env(safe-area-inset-bottom))`; `right` is `max(var(--s-4), calc(50vw - 340px + var(--s-4)))` so
   on wide screens it hugs the right edge of the 680 column instead of the viewport.
-  **Rendered only when `month.status === 'open'` AND `screen !== 'reconcile'`** (`App.tsx:100`) — a closed
-  month and the reconcile screen both hide it.
+  **Rendered only when `month.status === 'open'` AND the screen is neither `reconcile` nor `events`**
+  (`App.tsx:108`) — a closed month hides it, and both of those screens carry their own primary buttons, so
+  a FAB that logs into the active month would be the wrong action in the wrong place.
 - **Breakpoints:** `640px` (sheets become centered dialogs, `app.css:781`/`:801`) and `420px` (column padding
   + headline size, `app.css:1091`). That is the whole set.
 - **Safe area:** honored in the tabbar, the FAB, the sheet bottom padding, and the toast stack offset.
@@ -436,7 +439,7 @@ variant.
   14px inline in `.list__sub` and `.status`, 18px in `.banner`, 26px empty state, 40px for the large
   `.tone-good` confirmation mark.
 - Icons in use: `Plus, Home, List, Reconcile, History, Settings, Check, Close, ArrowLeft, ArrowRight, Info,
-  TrendUp, TrendDown, Repeat, Upload, Download, Edit, Trash, Wallet, Inbox, Link, Lock`. Add to this file in
+  TrendUp, TrendDown, Repeat, Upload, Download, Edit, Trash, Wallet, Inbox, Link, Flag, Lock`. Add to this file in
   the same style rather than pulling in an icon library.
 
 ---

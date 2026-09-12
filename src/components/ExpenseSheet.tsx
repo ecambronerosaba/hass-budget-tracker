@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import type { Expense, ISODate } from '../types/models';
+import type { BudgetEvent, Expense, ISODate } from '../types/models';
 import { FALLBACK_CATEGORY_ID } from '../data/seed';
 import {
   currentMonthId,
@@ -11,6 +11,7 @@ import {
   today,
 } from '../lib/dates';
 import { clampReimbursement } from '../lib/expense';
+import { countsAgainstMonth } from '../lib/event';
 import { parseAmount, round2 } from '../lib/money';
 import { sumNet } from '../lib/expense';
 import { useApp, useMonth, useMonthExpenses } from '../state/store';
@@ -34,6 +35,7 @@ export function ExpenseSheet({
   monthId,
   expense,
   prefill,
+  event,
   title,
   confirmLabel = 'Save expense',
   allowDelete = true,
@@ -43,6 +45,8 @@ export function ExpenseSheet({
   monthId: string;
   expense?: Expense;
   prefill?: ExpensePrefill;
+  /** When set, this is spending from the event's fund, not from the month. */
+  event?: BudgetEvent;
   title?: string;
   confirmLabel?: string;
   allowDelete?: boolean;
@@ -121,6 +125,7 @@ export function ExpenseSheet({
   const [category, setCategory] = useState(
     expense?.category ??
       prefill?.category ??
+      event?.category ??
       settings.lastUsedCategory ??
       FALLBACK_CATEGORY_ID,
   );
@@ -157,10 +162,11 @@ export function ExpenseSheet({
   // existing row, not when a caller (reconciliation, the recurring "log a
   // different amount" sheet) has taken over saving, and not when the date
   // field points the entry at a closed month.
-  const canMakeRecurring = !expense && !onSave && !isLocked(targetMonthId);
+  // A trip dinner is not a monthly bill, so event spending never offers it.
+  const canMakeRecurring = !expense && !onSave && !event && !isLocked(targetMonthId);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const submit = async (submitEvent: FormEvent) => {
+    submitEvent.preventDefault();
     setTouched(true);
     if (locked || !valid || saving) return;
     setSaving(true);
@@ -183,6 +189,8 @@ export function ExpenseSheet({
         const created = await addExpense(targetMonthId, {
           ...values,
           source: recurring ? 'recurring' : undefined,
+          eventId: event?.id,
+          eventKind: event ? 'spend' : undefined,
         });
         // The expense is logged at this point. If turning it into a template
         // fails, don't strand the sheet open — report it and still close, so a
@@ -208,8 +216,18 @@ export function ExpenseSheet({
         const suffix = recurringRegistered ? ' · now recurring' : '';
         if (recurring && !recurringRegistered) {
           // The failure toast above is the message; skip the routine one.
+        } else if (event) {
+          // Event spending draws the fund down and leaves the month alone, so
+          // quoting "left this month" here would state the opposite of what
+          // just happened.
+          notify(loggedMsg, { detail: `From the ${event.name} fund.` });
         } else if (month && targetMonthId === monthId) {
-          const spent = sumNet([...monthExpenses, { amount: values.amount, reimbursement }]);
+          // Event spending already sitting in this month isn't part of its
+          // budget, so it can't be part of what's left of it either.
+          const spent = sumNet([
+            ...monthExpenses.filter(countsAgainstMonth),
+            { amount: values.amount, reimbursement },
+          ]);
           const remaining = round2(month.budgetTotal - spent);
           notify(
             loggedMsg + suffix,
@@ -239,9 +257,11 @@ export function ExpenseSheet({
     ? locked
       ? 'View expense'
       : 'Edit expense'
-    : // Unmistakable, and it tracks the date field live — browsing a past
-      // month and logging into it says so right in the title.
-      `Log to ${monthLabel(targetMonthId)}`;
+    : event
+      ? `Log to ${event.name}`
+      : // Unmistakable, and it tracks the date field live — browsing a past
+        // month and logging into it says so right in the title.
+        `Log to ${monthLabel(targetMonthId)}`;
 
   return (
     <Sheet title={title ?? defaultTitle} onClose={onClose}>
@@ -272,6 +292,12 @@ export function ExpenseSheet({
           </div>
           {touched && !amountValid && (
             <span className="stat__note tone-over">Enter an amount above zero.</span>
+          )}
+          {event && (
+            <span className="stat__note">
+              Spent from the {event.name} fund — this doesn't count against{' '}
+              {monthLabel(targetMonthId, { year: false })}'s budget.
+            </span>
           )}
         </div>
 

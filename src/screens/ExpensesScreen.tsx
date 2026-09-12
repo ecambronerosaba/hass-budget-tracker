@@ -1,7 +1,14 @@
 import { useMemo, useRef, useState } from 'react';
 import { BulkExpenseSheet } from '../components/BulkExpenseSheet';
 import { ExpenseSheet } from '../components/ExpenseSheet';
-import { IconInbox, IconLink, IconPlus, IconRepeat, IconUpload } from '../components/Icons';
+import {
+  IconFlag,
+  IconInbox,
+  IconLink,
+  IconPlus,
+  IconRepeat,
+  IconUpload,
+} from '../components/Icons';
 import {
   EmptyState,
   ExpenseAmount,
@@ -11,6 +18,7 @@ import {
 } from '../components/ui';
 import { formatDayLabel, monthLabel } from '../lib/dates';
 import { netAmount, sumNet } from '../lib/expense';
+import { countsAgainstMonth, isEventSpend } from '../lib/event';
 import type { Expense } from '../types/models';
 import { useApp, useCategoryMap, useMonthExpenses } from '../state/store';
 
@@ -18,7 +26,7 @@ type SortKey = 'date' | 'amount';
 
 /** The month's ledger (§4.2): sortable, filterable, with a running total. */
 export function ExpensesScreen() {
-  const { activeMonthId, preferences, setPreference, isLocked } = useApp();
+  const { activeMonthId, events, preferences, setPreference, isLocked } = useApp();
   const expenses = useMonthExpenses(activeMonthId);
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
@@ -68,7 +76,12 @@ export function ExpensesScreen() {
     );
   }, [expenses, categoryFilter, sort]);
 
-  const total = sumNet(visible);
+  // The running total matches the Month screen's: event spending was budgeted
+  // when it was set aside, so counting it here would contradict the dashboard.
+  // The rows still show — they're real charges and they reach reconciliation.
+  const total = sumNet(visible.filter(countsAgainstMonth));
+  const eventSpend = sumNet(visible.filter(isEventSpend));
+  const eventNames = useMemo(() => new Map(events.map((e) => [e.id, e.name])), [events]);
   const locked = isLocked(activeMonthId);
 
   return (
@@ -84,6 +97,11 @@ export function ExpensesScreen() {
               · {visible.length} {visible.length === 1 ? 'item' : 'items'}
             </span>
           </div>
+          {eventSpend > 0 && (
+            <span className="stat__note">
+              Plus {money(eventSpend)} from event funds, budgeted when it was saved.
+            </span>
+          )}
         </div>
         <div className="row" style={{ gap: 'var(--s-2)', flexWrap: 'wrap' }}>
           {!locked && (
@@ -162,6 +180,12 @@ export function ExpensesScreen() {
                     )}
                     {expense.source === 'csv-added' && <IconUpload />}
                     {expense.reconciliationStatus === 'matched' && <IconLink />}
+                    {expense.eventId && (
+                      <>
+                        <IconFlag />
+                        <span>{eventNames.get(expense.eventId) ?? 'Event'}</span>
+                      </>
+                    )}
                     <SplitNote expense={expense} />
                   </span>
                 </span>

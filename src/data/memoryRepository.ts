@@ -2,6 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
+  BudgetEvent,
   Category,
   Expense,
   Month,
@@ -21,6 +22,7 @@ export class MemoryRepository implements BudgetRepository {
   private expenses = new Map<string, Expense>();
   private categories = new Map<string, Category>();
   private recurring = new Map<string, RecurringExpense>();
+  private events = new Map<string, BudgetEvent>();
   private sessions = new Map<MonthId, ReconciliationSession>();
   private settings: AppSettings = { ...DEFAULT_SETTINGS };
 
@@ -88,6 +90,18 @@ export class MemoryRepository implements BudgetRepository {
     this.recurring.delete(id);
   }
 
+  async listEvents(): Promise<BudgetEvent[]> {
+    return [...this.events.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async saveEvent(event: BudgetEvent): Promise<void> {
+    this.events.set(event.id, { ...event });
+  }
+
+  async deleteEvent(id: string): Promise<void> {
+    this.events.delete(id);
+  }
+
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
     return this.sessions.get(monthId) ?? null;
   }
@@ -103,12 +117,13 @@ export class MemoryRepository implements BudgetRepository {
   async exportAll(): Promise<BackupFile> {
     return {
       format: 'budget-tracker-backup',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       months: [...this.months.values()],
       expenses: [...this.expenses.values()],
       categories: [...this.categories.values()],
       recurring: [...this.recurring.values()],
+      events: [...this.events.values()],
       sessions: [...this.sessions.values()],
       settings: this.settings,
     };
@@ -120,6 +135,8 @@ export class MemoryRepository implements BudgetRepository {
     const cats = backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES;
     this.categories = new Map(cats.map((c) => [c.id, c]));
     this.recurring = new Map((backup.recurring ?? []).map((r) => [r.id, r]));
+    // `?? []`: a v1 backup predates events and simply has none.
+    this.events = new Map((backup.events ?? []).map((e) => [e.id, e]));
     this.sessions = new Map((backup.sessions ?? []).map((s) => [s.monthId, s]));
     this.settings = backup.settings ?? { ...DEFAULT_SETTINGS };
   }

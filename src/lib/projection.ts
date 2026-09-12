@@ -9,11 +9,13 @@
  */
 
 import type {
+  BudgetEvent,
   Expense,
   Month,
   MonthId,
   RecurringExpense,
 } from '../types/models';
+import { countsAgainstMonth, isContribution } from './event.ts';
 import {
   daysElapsedInMonth,
   daysInMonth,
@@ -32,6 +34,13 @@ export interface UpcomingRecurring {
   expectedDate: string;
   /** True once the expected day has arrived or passed without confirmation. */
   due: boolean;
+}
+
+/** A monthly set-aside the user has planned but not yet logged (§4.3). */
+export interface UpcomingEventContribution {
+  event: BudgetEvent;
+  /** What's left of this month's planned set-aside. */
+  amount: number;
 }
 
 export interface MonthSummary {
@@ -53,6 +62,7 @@ export interface MonthSummary {
   fractionUsed: number;
 
   upcoming: UpcomingRecurring[];
+  upcomingEvents: UpcomingEventContribution[];
   upcomingTotal: number;
 
   /** Extrapolated day-to-day spend + all known recurring costs. */
@@ -75,6 +85,8 @@ export interface SummaryInput {
   month: Month;
   expenses: Expense[];
   recurring: RecurringExpense[];
+  /** Optional: lets the projection see set-asides that are planned but unlogged. */
+  events?: BudgetEvent[];
   /** Injectable for tests. */
   now?: string;
 }
@@ -120,13 +132,43 @@ export function dueRecurringNudges(
   });
 }
 
+/**
+ * What each saving event still expects this month. A planned set-aside is
+ * known future cost in exactly the way an unposted rent payment is, so it
+ * belongs in the projection rather than appearing out of nowhere on the day
+ * it's logged. Partial contributions count — only the remainder is expected.
+ */
+export function plannedEventContributions(
+  monthId: MonthId,
+  events: BudgetEvent[],
+  expenses: Expense[],
+): UpcomingEventContribution[] {
+  return events
+    .filter((e) => e.phase === 'saving' && e.monthlyContribution > 0)
+    .map((event) => {
+      const already = sumNet(
+        expenses.filter(
+          (e) => e.monthId === monthId && e.eventId === event.id && isContribution(e),
+        ),
+      );
+      return { event, amount: round2(Math.max(0, event.monthlyContribution - already)) };
+    })
+    .filter((u) => u.amount > 0);
+}
+
 export function summarizeMonth({
   month,
   expenses,
   recurring,
+  events = [],
   now = today(),
 }: SummaryInput): MonthSummary {
   const { year, month: m } = splitMonthId(month.id);
+  // The month's budget is made of everything except event spending — that was
+  // already budgeted in the month it was set aside. `expenses` still carries
+  // it, because the ledger and reconciliation need the whole picture; only the
+  // arithmetic below narrows.
+  const counted = expenses.filter(countsAgainstMonth);
   const daysTotal = daysInMonth(year, m);
   const daysElapsed = daysElapsedInMonth(month.id, now);
   const daysRemaining = Math.max(0, daysTotal - daysElapsed);
@@ -134,16 +176,20 @@ export function summarizeMonth({
 
   // Net, throughout: what the month cost the user, not what passed through
   // the account. A split dinner that friends paid back is not spending.
-  const spent = sumNet(expenses);
+  const spent = sumNet(counted);
   const remaining = round2(month.budgetTotal - spent);
-  const reimbursed = round2(sumGross(expenses) - spent);
+  const reimbursed = round2(sumGross(counted) - spent);
 
   const upcoming = upcomingRecurring(month, recurring, now);
-  const upcomingTotal = sumAmounts(upcoming.map((u) => u.recurring.amount));
+  const upcomingEvents = plannedEventContributions(month.id, events, expenses);
+  const upcomingTotal = sumAmounts([
+    ...upcoming.map((u) => u.recurring.amount),
+    ...upcomingEvents.map((u) => u.amount),
+  ]);
 
   // Day-to-day spend excludes anything logged from a recurring template, so
   // the daily rate isn't skewed by a single large fixed cost.
-  const recurringLogged = sumNet(expenses.filter((e) => e.source === 'recurring'));
+  const recurringLogged = sumNet(counted.filter((e) => e.source === 'recurring'));
   const dayToDaySpent = round2(spent - recurringLogged);
   const dayToDayRate = daysElapsed > 0 ? dayToDaySpent / daysElapsed : 0;
   const projectedDayToDay = month.status === 'reconciled'
@@ -177,13 +223,14 @@ export function summarizeMonth({
     spent,
     reimbursed,
     remaining,
-    expenseCount: expenses.length,
+    expenseCount: counted.length,
     daysTotal,
     daysElapsed,
     daysRemaining,
     fractionElapsed,
     fractionUsed: month.budgetTotal > 0 ? spent / month.budgetTotal : 0,
     upcoming,
+    upcomingEvents,
     upcomingTotal,
     projectedTotal,
     projectedDelta,

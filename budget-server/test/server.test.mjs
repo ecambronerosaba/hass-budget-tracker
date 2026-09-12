@@ -68,6 +68,9 @@ function emptyDocDataShape() {
     expenses: [],
     categories: [],
     recurring: [],
+    // Present in the empty document but deliberately absent from DATA_KEYS:
+    // requiring it would 400 a PUT from a client built before event budgets.
+    events: [],
     sessions: [],
     settings: null,
   };

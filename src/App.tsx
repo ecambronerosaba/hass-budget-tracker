@@ -4,9 +4,11 @@ import { ExpensesScreen } from './screens/ExpensesScreen';
 import { ReconcileScreen } from './screens/ReconcileScreen';
 import { HistoryScreen } from './screens/HistoryScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { EventsScreen } from './screens/EventsScreen';
 import { ExpenseSheet } from './components/ExpenseSheet';
 import { Toasts } from './components/ui';
 import {
+  IconFlag,
   IconHistory,
   IconHome,
   IconList,
@@ -18,11 +20,18 @@ import { currentMonthId, monthLabel, shiftMonth } from './lib/dates';
 import { useApp, useMonth } from './state/store';
 import { useTheme } from './state/useTheme';
 
-export type Screen = 'dashboard' | 'expenses' | 'reconcile' | 'history' | 'settings';
+export type Screen =
+  | 'dashboard'
+  | 'expenses'
+  | 'events'
+  | 'reconcile'
+  | 'history'
+  | 'settings';
 
 const TABS: { id: Screen; label: string; Icon: typeof IconHome }[] = [
   { id: 'dashboard', label: 'Month', Icon: IconHome },
   { id: 'expenses', label: 'Expenses', Icon: IconList },
+  { id: 'events', label: 'Events', Icon: IconFlag },
   { id: 'reconcile', label: 'Reconcile', Icon: IconReconcile },
   { id: 'history', label: 'History', Icon: IconHistory },
   { id: 'settings', label: 'Settings', Icon: IconSettings },
@@ -90,12 +99,13 @@ export function App() {
       <main className="app__main">
         {screen === 'dashboard' && <Dashboard onNavigate={setScreen} />}
         {screen === 'expenses' && <ExpensesScreen />}
+        {screen === 'events' && <EventsScreen />}
         {screen === 'reconcile' && <ReconcileScreen />}
         {screen === 'history' && <HistoryScreen />}
         {screen === 'settings' && <SettingsScreen />}
       </main>
 
-      {canAdd && screen !== 'reconcile' && (
+      {canAdd && screen !== 'reconcile' && screen !== 'events' && (
         <button className="fab" onClick={() => setAdding(true)} aria-label="Log an expense">
           <IconPlus />
         </button>

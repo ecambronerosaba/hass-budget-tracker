@@ -60,6 +60,13 @@ export function shiftMonth(id: MonthId, delta: number): MonthId {
   return monthIdFrom(d.getFullYear(), d.getMonth() + 1);
 }
 
+/** Whole months from `a` to `b` (positive when b is later). */
+export function monthsBetween(a: MonthId, b: MonthId): number {
+  const from = splitMonthId(a);
+  const to = splitMonthId(b);
+  return (to.year - from.year) * 12 + (to.month - from.month);
+}
+
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',

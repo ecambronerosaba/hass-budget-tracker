@@ -7,6 +7,7 @@ import {
   expectedDateFor,
   monthElapsedFraction,
   monthIdOf,
+  monthsBetween,
   shiftMonth,
   ordinal,
 } from '../src/lib/dates.ts';
@@ -21,7 +22,13 @@ import {
 import { autoMatch, reconciliationTotals, suggestCandidates } from '../src/lib/reconcile.ts';
 import { clampReimbursement, netAmount, sumNet } from '../src/lib/expense.ts';
 import { summarizeMonth, totalsByCategory, upcomingRecurring } from '../src/lib/projection.ts';
-import type { BankTransaction, Expense, Month, RecurringExpense } from '../src/types/models';
+import type {
+  BankTransaction,
+  BudgetEvent,
+  Expense,
+  Month,
+  RecurringExpense,
+} from '../src/types/models';
 
 /* ------------------------------- money -------------------------------- */
 
@@ -53,6 +60,13 @@ test('date helpers stay on the local calendar', () => {
   assert.equal(ordinal(1), '1st');
   assert.equal(ordinal(11), '11th');
   assert.equal(ordinal(22), '22nd');
+});
+
+test('monthsBetween counts whole months in either direction', () => {
+  assert.equal(monthsBetween('2026-09', '2027-03'), 6);
+  assert.equal(monthsBetween('2026-09', '2026-09'), 0);
+  assert.equal(monthsBetween('2027-03', '2026-09'), -6);
+  assert.equal(monthsBetween('2026-12', '2027-01'), 1);
 });
 
 test('month elapsed fraction is bounded and day-based', () => {
@@ -429,3 +443,132 @@ function month(partial: Partial<Month> = {}): Month {
     ...partial,
   };
 }
+
+/* ------------------- events inside a month's arithmetic ----------------- */
+
+function monthFixture(patch: Partial<Month> = {}): Month {
+  return {
+    id: '2026-09',
+    year: 2026,
+    month: 9,
+    budgetTotal: 2000,
+    status: 'open',
+    budgetHistory: [],
+    recurringExpenseConfirmations: [],
+    createdAt: '2026-09-01T00:00:00.000Z',
+    ...patch,
+  };
+}
+
+let evSeq = 0;
+function expenseFixture(patch: Partial<Expense> = {}): Expense {
+  evSeq += 1;
+  return {
+    id: `e_${evSeq}`,
+    monthId: '2026-09',
+    date: '2026-09-05',
+    amount: 100,
+    category: 'cat_other',
+    description: 'Thing',
+    source: 'manual',
+    reconciliationStatus: 'unreconciled',
+    createdAt: '2026-09-05T00:00:00.000Z',
+    updatedAt: '2026-09-05T00:00:00.000Z',
+    ...patch,
+  };
+}
+
+function eventFixture(patch: Partial<BudgetEvent> = {}): BudgetEvent {
+  return {
+    id: 'evt_1',
+    name: 'Japan trip',
+    targetAmount: 3000,
+    phase: 'saving',
+    monthlyContribution: 400,
+    category: 'cat_other',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...patch,
+  };
+}
+
+test('event spending is not part of the month it happened in', () => {
+  const s = summarizeMonth({
+    month: monthFixture(),
+    expenses: [
+      expenseFixture({ amount: 300 }),
+      expenseFixture({ amount: 400, eventId: 'evt_1', eventKind: 'contribution' }),
+      expenseFixture({ amount: 900, eventId: 'evt_1', eventKind: 'spend' }),
+    ],
+    recurring: [],
+    now: '2026-09-15',
+  });
+  // 300 ordinary + 400 set aside. The 900 spent on the trip was budgeted when
+  // it was saved, so counting it here would count it twice.
+  assert.equal(s.spent, 700);
+  assert.equal(s.expenseCount, 2);
+  assert.equal(s.remaining, 1300);
+});
+
+test('a reimbursed event spend is excluded gross and net alike', () => {
+  const s = summarizeMonth({
+    month: monthFixture(),
+    expenses: [
+      expenseFixture({ amount: 200, reimbursement: 50 }),
+      expenseFixture({ amount: 175, reimbursement: 150, eventId: 'evt_1', eventKind: 'spend' }),
+    ],
+    recurring: [],
+    now: '2026-09-15',
+  });
+  assert.equal(s.spent, 150);
+  assert.equal(s.reimbursed, 50);
+});
+
+test('a planned monthly set-aside shows as still expected until it is logged', () => {
+  const pending = summarizeMonth({
+    month: monthFixture(),
+    expenses: [],
+    recurring: [],
+    events: [eventFixture()],
+    now: '2026-09-15',
+  });
+  assert.equal(pending.upcomingEvents.length, 1);
+  assert.equal(pending.upcomingEvents[0].amount, 400);
+  assert.equal(pending.upcomingTotal, 400);
+
+  const done = summarizeMonth({
+    month: monthFixture(),
+    expenses: [expenseFixture({ amount: 400, eventId: 'evt_1', eventKind: 'contribution' })],
+    recurring: [],
+    events: [eventFixture()],
+    now: '2026-09-15',
+  });
+  assert.equal(done.upcomingEvents.length, 0);
+  assert.equal(done.upcomingTotal, 0);
+});
+
+test('a partly-funded month expects only the rest of the set-aside', () => {
+  const s = summarizeMonth({
+    month: monthFixture(),
+    expenses: [expenseFixture({ amount: 150, eventId: 'evt_1', eventKind: 'contribution' })],
+    recurring: [],
+    events: [eventFixture()],
+    now: '2026-09-15',
+  });
+  assert.equal(s.upcomingEvents[0].amount, 250);
+});
+
+test('only saving events with a plan are expected', () => {
+  const s = summarizeMonth({
+    month: monthFixture(),
+    expenses: [],
+    recurring: [],
+    events: [
+      eventFixture({ id: 'a', phase: 'spending' }),
+      eventFixture({ id: 'b', phase: 'closed' }),
+      eventFixture({ id: 'c', monthlyContribution: 0 }),
+    ],
+    now: '2026-09-15',
+  });
+  assert.equal(s.upcomingEvents.length, 0);
+});

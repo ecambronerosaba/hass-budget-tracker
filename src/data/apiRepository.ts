@@ -2,6 +2,7 @@ import type { BudgetRepository } from './repository';
 import type {
   AppSettings,
   BackupFile,
+  BudgetEvent,
   Category,
   Expense,
   Month,
@@ -17,12 +18,21 @@ interface RepoData {
   expenses: Expense[];
   categories: Category[];
   recurring: RecurringExpense[];
+  events: BudgetEvent[];
   sessions: ReconciliationSession[];
   settings: AppSettings | null;
 }
 
 function emptyData(): RepoData {
-  return { months: [], expenses: [], categories: [], recurring: [], sessions: [], settings: null };
+  return {
+    months: [],
+    expenses: [],
+    categories: [],
+    recurring: [],
+    events: [],
+    sessions: [],
+    settings: null,
+  };
 }
 
 /** Bounds a fetch so a hung connection surfaces as a rejection instead of an
@@ -242,6 +252,21 @@ export class ApiRepository implements BudgetRepository {
     await this.commit((d) => ({ ...d, recurring: d.recurring.filter((r) => r.id !== id) }));
   }
 
+  /* `?? []` on every read and write below: a document written by a build that
+   * predates event budgets has no `events` key at all, and the first read of
+   * it must not throw. */
+  async listEvents(): Promise<BudgetEvent[]> {
+    return [...(this.data.events ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async saveEvent(event: BudgetEvent): Promise<void> {
+    await this.commit((d) => ({ ...d, events: upsertBy(d.events ?? [], event, (e) => e.id) }));
+  }
+
+  async deleteEvent(id: string): Promise<void> {
+    await this.commit((d) => ({ ...d, events: (d.events ?? []).filter((e) => e.id !== id) }));
+  }
+
   async getSession(monthId: MonthId): Promise<ReconciliationSession | null> {
     return this.data.sessions.find((s) => s.monthId === monthId) ?? null;
   }
@@ -261,12 +286,13 @@ export class ApiRepository implements BudgetRepository {
     const d = this.data;
     return {
       format: 'budget-tracker-backup',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       months: d.months,
       expenses: d.expenses,
       categories: d.categories,
       recurring: d.recurring,
+      events: d.events ?? [],
       sessions: d.sessions,
       settings: d.settings ?? DEFAULT_SETTINGS,
     };
@@ -281,6 +307,7 @@ export class ApiRepository implements BudgetRepository {
       expenses: backup.expenses ?? [],
       categories: backup.categories?.length ? backup.categories : DEFAULT_CATEGORIES,
       recurring: backup.recurring ?? [],
+      events: backup.events ?? [],
       sessions: backup.sessions ?? [],
       settings: backup.settings ?? DEFAULT_SETTINGS,
     };

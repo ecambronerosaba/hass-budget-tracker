@@ -11,9 +11,11 @@ import {
   type SignConvention,
 } from '../../lib/csv';
 import { monthLabel } from '../../lib/dates';
+import { dedupeAgainst } from '../../lib/reconcile';
 import { IconDownload, IconInfo, IconUpload } from '../../components/Icons';
 import { Field, Money, Segmented } from '../../components/ui';
 import { useApp } from '../../state/store';
+import type { BankTransaction } from '../../types/models';
 
 const FIELD_LABELS: { key: keyof ColumnMapping; label: string; required?: boolean }[] = [
   { key: 'date', label: 'Date', required: true },
@@ -23,6 +25,11 @@ const FIELD_LABELS: { key: keyof ColumnMapping; label: string; required?: boolea
   { key: 'credit', label: 'Credit column (optional)' },
 ];
 
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** Stable identity, so the dedupe memo doesn't rerun on every render. */
+const NO_ROWS: BankTransaction[] = [];
+
 /**
  * Import step (§4.5, revised for any CSV).
  *
@@ -31,9 +38,24 @@ const FIELD_LABELS: { key: keyof ColumnMapping; label: string; required?: boolea
  * override, and the preview shows exactly what will be imported before
  * anything is written.
  */
-export function ImportStep({ monthId }: { monthId: string }) {
-  const { startReconciliation, notify } = useApp();
+export function ImportStep({
+  monthId,
+  mode = 'start',
+  existing = NO_ROWS,
+  onDone,
+  onCancel,
+}: {
+  monthId: string;
+  /** 'start' opens a month's reconciliation; 'add' merges into one under way. */
+  mode?: 'start' | 'add';
+  /** Rows the session already carries, so the preview can say what's new. */
+  existing?: BankTransaction[];
+  onDone?: () => void;
+  onCancel?: () => void;
+}) {
+  const { startReconciliation, addStatement, notify } = useApp();
   const fileRef = useRef<HTMLInputElement>(null);
+  const adding = mode === 'add';
 
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [fileName, setFileName] = useState<string>('');
@@ -73,6 +95,12 @@ export function ImportStep({ monthId }: { monthId: string }) {
     });
   }, [plan, mapping, dateFormat, sign, scopeToMonth, monthId]);
 
+  const deduped = useMemo(() => {
+    if (!result) return null;
+    if (!adding) return { fresh: result.transactions, duplicates: [] as BankTransaction[] };
+    return dedupeAgainst(existing, result.transactions);
+  }, [result, adding, existing]);
+
   const setColumn = (key: keyof ColumnMapping, index: number) => {
     setMapping((prev) => {
       if (!prev) return prev;
@@ -96,15 +124,31 @@ export function ImportStep({ monthId }: { monthId: string }) {
   };
 
   const start = async () => {
-    if (!result || result.transactions.length === 0) return;
+    if (!result || !deduped || deduped.fresh.length === 0) return;
+    const excluded = {
+      credits: result.creditsIgnored,
+      outsideMonth: result.outsideMonth,
+      unreadable: result.skipped.length,
+    };
     setBusy(true);
     try {
-      await startReconciliation(monthId, result.transactions, fileName, {
-        credits: result.creditsIgnored,
-        outsideMonth: result.outsideMonth,
-        unreadable: result.skipped.length,
-      });
-      notify(`${result.transactions.length} transactions imported`);
+      if (adding) {
+        // The whole file goes to the store, which dedupes it against the session
+        // as it writes. Deduping here first would double-count: the preview has
+        // already cancelled the rows the session holds, so a second pass would
+        // read a genuinely repeated charge as one of them and drop it.
+        const res = await addStatement(monthId, result.transactions, fileName, excluded);
+        notify(`${res.added} ${plural(res.added, 'transaction', 'transactions')} added`, {
+          detail:
+            res.duplicates > 0
+              ? `${res.duplicates} ${plural(res.duplicates, 'row was', 'rows were')} already imported`
+              : undefined,
+        });
+      } else {
+        await startReconciliation(monthId, result.transactions, fileName, excluded);
+        notify(`${result.transactions.length} transactions imported`);
+      }
+      onDone?.();
     } finally {
       setBusy(false);
     }
@@ -115,12 +159,12 @@ export function ImportStep({ monthId }: { monthId: string }) {
       <div className="stack" style={{ ['--gap' as string]: 'var(--s-4)' }}>
         <section className="card">
           <h2 style={{ fontSize: 'var(--t-heading)', fontWeight: 600, marginBottom: 6 }}>
-            Import your statement
+            {adding ? 'Add another statement' : 'Import your statement'}
           </h2>
           <p className="muted" style={{ fontSize: 'var(--t-small)' }}>
-            Any CSV works. The app needs three things — a date, a description and an amount — and
-            it will try to find them itself. You get to check its guesses before anything is
-            imported.
+            {adding
+              ? `Any CSV works. Its rows join the reconciliation already under way for ${monthLabel(monthId)}, and rows this month already carries are skipped automatically. You get to check the guesses before anything is added.`
+              : 'Any CSV works. The app needs three things — a date, a description and an amount — and it will try to find them itself. You get to check its guesses before anything is imported.'}
           </p>
 
           <div
@@ -147,6 +191,11 @@ export function ImportStep({ monthId }: { monthId: string }) {
               <IconDownload />
               Download the template format
             </button>
+            {adding && (
+              <button className="btn btn--ghost btn--block" onClick={() => onCancel?.()}>
+                Cancel
+              </button>
+            )}
           </div>
 
           {error && (
@@ -271,7 +320,7 @@ export function ImportStep({ monthId }: { monthId: string }) {
         </div>
       </section>
 
-      {result && (
+      {result && deduped && (
         <section className="card">
           <div className="section-label" style={{ marginBottom: 'var(--s-3)' }}>
             Preview
@@ -286,7 +335,7 @@ export function ImportStep({ monthId }: { monthId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {result.transactions.slice(0, 6).map((t) => (
+                {deduped.fresh.slice(0, 6).map((t) => (
                   <tr key={t.id}>
                     <td className="num">{t.date}</td>
                     <td>{t.rawDescription}</td>
@@ -301,9 +350,15 @@ export function ImportStep({ monthId }: { monthId: string }) {
 
           <div style={{ marginTop: 'var(--s-4)' }}>
             <div className="kv">
-              <span className="kv__k">Charges to import</span>
-              <span className="num">{result.transactions.length}</span>
+              <span className="kv__k">{adding ? 'New charges to add' : 'Charges to import'}</span>
+              <span className="num">{deduped.fresh.length}</span>
             </div>
+            {adding && deduped.duplicates.length > 0 && (
+              <div className="kv">
+                <span className="kv__k">Already imported</span>
+                <span className="num">{deduped.duplicates.length}</span>
+              </div>
+            )}
             {result.creditsIgnored > 0 && (
               <div className="kv">
                 <span className="kv__k">Credits and refunds left out</span>
@@ -342,13 +397,27 @@ export function ImportStep({ monthId }: { monthId: string }) {
           <button
             className="btn btn--primary btn--block"
             style={{ marginTop: 'var(--s-5)' }}
-            disabled={busy || result.transactions.length === 0}
+            disabled={busy || deduped.fresh.length === 0}
             onClick={start}
           >
-            {result.transactions.length === 0
-              ? 'Nothing to import yet'
-              : `Import ${result.transactions.length} transactions`}
+            {deduped.fresh.length === 0
+              ? adding
+                ? 'Nothing new in this file'
+                : 'Nothing to import yet'
+              : adding
+                ? `Add ${deduped.fresh.length} ${plural(deduped.fresh.length, 'transaction', 'transactions')}`
+                : `Import ${deduped.fresh.length} transactions`}
           </button>
+
+          {adding && (
+            <button
+              className="btn btn--ghost btn--block"
+              style={{ marginTop: 'var(--s-3)' }}
+              onClick={() => onCancel?.()}
+            >
+              Cancel
+            </button>
+          )}
         </section>
       )}
 

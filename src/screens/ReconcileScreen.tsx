@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ImportStep } from './reconcile/ImportStep';
 import { QueueA } from './reconcile/QueueA';
 import { QueueB } from './reconcile/QueueB';
 import { SummaryStep } from './reconcile/SummaryStep';
-import { IconCheck, IconLink } from '../components/Icons';
+import { IconCheck, IconInbox, IconLink } from '../components/Icons';
 import { Money, useMoneyFormatter } from '../components/ui';
 import { formatDayLabel, monthLabel } from '../lib/dates';
+import { sessionImports } from '../lib/reconcile';
 import type { ReconcileStage } from '../types/models';
 import { useApp, useMonth, useMonthExpenses, useSession } from '../state/store';
 
@@ -62,11 +63,14 @@ export function ReconcileScreen() {
     activeMonthId,
     setReconcileStage,
     cancelReconciliation,
+    unignoreTransaction,
     notify,
     preferences,
     setPreference,
     unresolvedCounts,
   } = useApp();
+  const [adding, setAdding] = useState(false);
+  const [showSkipped, setShowSkipped] = useState(false);
   const month = useMonth(activeMonthId);
   const expenses = useMonthExpenses(activeMonthId);
   const session = useSession(activeMonthId);
@@ -92,6 +96,16 @@ export function ReconcileScreen() {
     () => session?.transactions.filter((t) => t.matchStatus === 'matched') ?? [],
     [session],
   );
+  const skipped = useMemo(
+    () => session?.transactions.filter((t) => t.matchStatus === 'ignored') ?? [],
+    [session],
+  );
+  const sourceLabel = useMemo(() => {
+    if (!session) return '';
+    const files = sessionImports(session);
+    if (files.length === 1) return files[0].fileName ? `From ${files[0].fileName}` : 'From one file';
+    return `From ${files.length} files`;
+  }, [session]);
   const expenseById = useMemo(() => new Map(expenses.map((e) => [e.id, e])), [expenses]);
 
   if (!month) return <div className="empty">Loading…</div>;
@@ -117,6 +131,20 @@ export function ReconcileScreen() {
     return <ImportStep monthId={activeMonthId} />;
   }
 
+  // A statement can arrive in pieces, so importing again merges into the work
+  // already done rather than replacing it.
+  if (adding) {
+    return (
+      <ImportStep
+        monthId={activeMonthId}
+        mode="add"
+        existing={session.transactions}
+        onDone={() => setAdding(false)}
+        onCancel={() => setAdding(false)}
+      />
+    );
+  }
+
   return (
     <div className="stack" style={{ ['--gap' as string]: 'var(--s-4)' }}>
       <div className="stack" style={{ ['--gap' as string]: 'var(--s-2)' }}>
@@ -127,22 +155,27 @@ export function ReconcileScreen() {
             summaryDisabled={unresolvedTotal > 0}
             disabledReason={unresolvedReason}
           />
-          <button
-            className="linkish"
-            onClick={async () => {
-              const removed = await cancelReconciliation(activeMonthId);
-              notify('Import discarded', {
-                detail:
-                  removed > 0
-                    ? `${removed} ${removed === 1 ? 'expense' : 'expenses'} added from the statement ${
-                        removed === 1 ? 'was' : 'were'
-                      } removed too`
-                    : 'Nothing you logged was changed',
-              });
-            }}
-          >
-            Start over
-          </button>
+          <span className="row" style={{ gap: 'var(--s-4)' }}>
+            <button className="linkish" onClick={() => setAdding(true)}>
+              Add another statement
+            </button>
+            <button
+              className="linkish"
+              onClick={async () => {
+                const removed = await cancelReconciliation(activeMonthId);
+                notify('Import discarded', {
+                  detail:
+                    removed > 0
+                      ? `${removed} ${removed === 1 ? 'expense' : 'expenses'} added from the statement ${
+                          removed === 1 ? 'was' : 'were'
+                        } removed too`
+                      : 'Nothing you logged was changed',
+                });
+              }}
+            >
+              Start over
+            </button>
+          </span>
         </div>
         {unresolvedTotal > 0 && (
           <p className="dim" style={{ fontSize: 'var(--t-micro)' }}>
@@ -225,12 +258,60 @@ export function ReconcileScreen() {
         </section>
       )}
 
-      {session.fileName && (
-        <p className="dim" style={{ fontSize: 'var(--t-micro)', textAlign: 'center' }}>
-          From {session.fileName} · {session.transactions.length} rows ·{' '}
-          {money(session.transactions.reduce((sum, t) => sum + t.amount, 0))} on the statement
-        </p>
+      {/* Unlike the matched panel this stays on the summary too: it is the only
+          way back for a row skipped by mistake, and the total is about to lock. */}
+      {skipped.length > 0 && (
+        <section className="card card--flush">
+          <button
+            className="row row--between"
+            style={{ width: '100%', padding: 'var(--s-4) var(--s-5)' }}
+            onClick={() => setShowSkipped(!showSkipped)}
+            aria-expanded={showSkipped}
+          >
+            <span className="row" style={{ gap: 'var(--s-3)' }}>
+              <span className="dim">
+                <IconInbox />
+              </span>
+              <span style={{ fontSize: 'var(--t-small)' }}>
+                {skipped.length} skipped, not logged
+              </span>
+            </span>
+            <span className="linkish">{showSkipped ? 'Hide' : 'View'}</span>
+          </button>
+          {showSkipped && (
+            <div className="list">
+              {skipped.map((txn) => (
+                <div className="list__item" key={txn.id}>
+                  <span className="list__main">
+                    <span className="list__title">{txn.rawDescription}</span>
+                    <span className="list__sub">
+                      <span>{formatDayLabel(txn.date, activeMonthId)}</span>
+                      <span>·</span>
+                      <span className="num">
+                        <Money amount={txn.amount} />
+                      </span>
+                    </span>
+                  </span>
+                  <button
+                    className="linkish"
+                    onClick={async () => {
+                      await unignoreTransaction(activeMonthId, txn.id);
+                      notify('Back in the statement queue');
+                    }}
+                  >
+                    Put it back
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
+
+      <p className="dim" style={{ fontSize: 'var(--t-micro)', textAlign: 'center' }}>
+        {sourceLabel} · {session.transactions.length} rows ·{' '}
+        {money(session.transactions.reduce((sum, t) => sum + t.amount, 0))} on the statement
+      </p>
     </div>
   );
 }

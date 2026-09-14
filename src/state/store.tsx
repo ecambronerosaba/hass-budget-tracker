@@ -44,7 +44,7 @@ import { clampReimbursement } from '../lib/expense';
 import { summarizeBucket, type BucketSummary } from '../lib/bucket';
 import { newId } from '../lib/id';
 import { round2 } from '../lib/money';
-import { autoMatch } from '../lib/reconcile';
+import { autoMatch, dedupeAgainst, sessionImports } from '../lib/reconcile';
 import { resolveRecurringFromExpense, type RecurringTemplateDraft } from '../lib/recurring';
 
 /* ------------------------------- types --------------------------------- */
@@ -193,8 +193,22 @@ export interface AppStore extends AppData {
     fileName?: string,
     excluded?: { credits: number; outsideMonth: number; unreadable: number },
   ) => Promise<void>;
+  /**
+   * Reads another statement into a month already being reconciled, keeping
+   * every decision made so far. Resolves with what the file contributed.
+   */
+  addStatement: (
+    monthId: MonthId,
+    transactions: BankTransaction[],
+    fileName?: string,
+    excluded?: { credits: number; outsideMonth: number; unreadable: number },
+  ) => Promise<{ added: number; duplicates: number }>;
   setReconcileStage: (monthId: MonthId, stage: ReconcileStage) => Promise<void>;
   linkTransaction: (monthId: MonthId, txnId: string, expenseId: string) => Promise<void>;
+  /** Resolves a statement row without logging it — a hold, a pending credit. */
+  ignoreTransaction: (monthId: MonthId, txnId: string) => Promise<void>;
+  /** Puts a skipped row back in the queue. */
+  unignoreTransaction: (monthId: MonthId, txnId: string) => Promise<void>;
   addExpenseFromTransaction: (
     monthId: MonthId,
     txnId: string,
@@ -891,6 +905,7 @@ export function AppProvider({
     async (monthId, transactions, fileName, excluded) => {
       const monthExpenses = await repo().listExpenses(monthId);
       const result = autoMatch(transactions, monthExpenses);
+      const now = new Date().toISOString();
       await repo().saveExpenses(result.expenses);
       await repo().saveSession({
         monthId,
@@ -899,10 +914,74 @@ export function AppProvider({
         resolvedLoggedOnly: [],
         createdExpenseIds: [],
         excluded: excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
-        importedAt: new Date().toISOString(),
+        importedAt: now,
         fileName,
+        imports: [
+          {
+            id: newId('imp'),
+            fileName,
+            importedAt: now,
+            duplicates: 0,
+            excluded: excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
+          },
+        ],
       });
       await reload();
+    },
+    [reload],
+  );
+
+  /**
+   * A month's statement can arrive in pieces, so a second file merges into the
+   * session rather than replacing it. Two things make that safe: rows the
+   * session already carries are dropped by fingerprint, and auto-matching runs
+   * only over the new rows — `autoMatch` unlinks every expense it doesn't
+   * match, so running it across the whole set would undo earlier decisions.
+   */
+  const addStatement = useCallback<AppStore['addStatement']>(
+    async (monthId, transactions, fileName, excluded) => {
+      const session = await repo().getSession(monthId);
+      if (!session) return { added: 0, duplicates: 0 };
+
+      const { fresh, duplicates } = dedupeAgainst(session.transactions, transactions);
+      const monthExpenses = await repo().listExpenses(monthId);
+      const linkable = monthExpenses.filter((e) => e.reconciliationStatus !== 'matched');
+      const result = autoMatch(fresh, linkable);
+
+      const newlyMatched = new Set(
+        result.transactions
+          .filter((t) => t.matchStatus === 'matched' && t.matchedExpenseId)
+          .map((t) => t.matchedExpenseId as string),
+      );
+      await repo().saveExpenses(result.expenses.filter((e) => newlyMatched.has(e.id)));
+
+      const arrivedUnmatched = result.transactions.some((t) => t.matchStatus === 'unmatched');
+
+      await repo().saveSession({
+        ...session,
+        // A row that lands after the user reached the total sends them back to
+        // the queue that now owes a decision.
+        stage: arrivedUnmatched && session.stage === 'summary' ? 'queue-a' : session.stage,
+        // Appended rather than re-sorted: the user is working down this deck,
+        // and re-ordering it mid-review would move the card under their thumb.
+        transactions: [...session.transactions, ...result.transactions],
+        // The statement shows these now, so they are no longer logged-only.
+        resolvedLoggedOnly: (session.resolvedLoggedOnly ?? []).filter(
+          (id) => !newlyMatched.has(id),
+        ),
+        imports: [
+          ...sessionImports(session),
+          {
+            id: newId('imp'),
+            fileName,
+            importedAt: new Date().toISOString(),
+            duplicates: duplicates.length,
+            excluded: excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
+          },
+        ],
+      });
+      await reload();
+      return { added: fresh.length, duplicates: duplicates.length };
     },
     [reload],
   );
@@ -938,6 +1017,42 @@ export function AppProvider({
       await reload();
     },
     [data.expenses, reload],
+  );
+
+  /**
+   * Not every charge on the statement is an expense: an authorization hold, a
+   * deposit coming back, a charge a friend is repaying. Skipping settles the
+   * row so the queue can clear, without inventing a line in the ledger.
+   */
+  const setIgnored = useCallback(
+    async (monthId: MonthId, txnId: string, ignored: boolean) => {
+      const session = await repo().getSession(monthId);
+      if (!session) return;
+      await repo().saveSession({
+        ...session,
+        transactions: session.transactions.map((t) =>
+          t.id === txnId
+            ? {
+                ...t,
+                matchStatus: ignored ? ('ignored' as const) : ('unmatched' as const),
+                matchedExpenseId: undefined,
+              }
+            : t,
+        ),
+      });
+      await reload();
+    },
+    [reload],
+  );
+
+  const ignoreTransaction = useCallback<AppStore['ignoreTransaction']>(
+    (monthId, txnId) => setIgnored(monthId, txnId, true),
+    [setIgnored],
+  );
+
+  const unignoreTransaction = useCallback<AppStore['unignoreTransaction']>(
+    (monthId, txnId) => setIgnored(monthId, txnId, false),
+    [setIgnored],
   );
 
   const addExpenseFromTransaction = useCallback<AppStore['addExpenseFromTransaction']>(
@@ -1107,8 +1222,11 @@ export function AppProvider({
       coverFromMonth,
       bucketExpenses,
       startReconciliation,
+      addStatement,
       setReconcileStage,
       linkTransaction,
+      ignoreTransaction,
+      unignoreTransaction,
       addExpenseFromTransaction,
       resolveLoggedOnly,
       finishReconciliation,
@@ -1124,7 +1242,8 @@ export function AppProvider({
       saveRecurring, createRecurring, deleteRecurring, confirmRecurring, snoozeRecurring,
       skipRecurring, registerRecurringFromExpense,
       createBucket, updateBucket, setBucketPhase, deleteBucket, coverFromMonth, bucketExpenses,
-      startReconciliation, setReconcileStage, linkTransaction,
+      startReconciliation, addStatement, setReconcileStage, linkTransaction,
+      ignoreTransaction, unignoreTransaction,
       addExpenseFromTransaction, resolveLoggedOnly, finishReconciliation,
       cancelReconciliation, updateSettings, exportBackup, importBackup,
     ],

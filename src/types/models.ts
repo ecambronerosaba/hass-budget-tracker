@@ -100,7 +100,13 @@ export interface Expense {
   updatedAt: Timestamp;
 }
 
-export type MatchStatus = 'matched' | 'unmatched';
+/**
+ * `ignored` is a reviewed decision, not a filtered-out row: a hold or a charge
+ * that will be reimbursed is a real positive charge, so it reaches the queue
+ * and the user says it shouldn't be logged. It resolves the row without
+ * creating an expense.
+ */
+export type MatchStatus = 'matched' | 'unmatched' | 'ignored';
 
 /**
  * A row from an imported statement. Lives only for the duration of a
@@ -171,6 +177,21 @@ export interface Bucket {
 /** Where the user is in the two-queue reconciliation flow (§4.6). */
 export type ReconcileStage = 'import' | 'queue-a' | 'queue-b' | 'summary';
 
+/** One CSV read into a session. A month's statement can arrive in pieces. */
+export interface ImportBatch {
+  id: string;
+  fileName?: string;
+  importedAt: Timestamp;
+  /** Rows the session already carried, so this file didn't double them. */
+  duplicates: number;
+  /**
+   * What this file left out. Kept per file rather than summed across them:
+   * a bank's export is usually cumulative, so the next file restates the same
+   * credits and a running total would count them twice.
+   */
+  excluded: { credits: number; outsideMonth: number; unreadable: number };
+}
+
 export interface ReconciliationSession {
   monthId: MonthId;
   stage: ReconcileStage;
@@ -182,10 +203,19 @@ export interface ReconciliationSession {
    * has to remove them too, or "start over" silently leaves them behind.
    */
   createdExpenseIds: string[];
-  /** What the import left out, kept so the closing summary can restate it. */
+  /**
+   * What the imports left out, summed across every file read into this
+   * session, kept so the closing summary can restate it.
+   */
   excluded: { credits: number; outsideMonth: number; unreadable: number };
   importedAt: Timestamp;
   fileName?: string;
+  /**
+   * Every file read into this month, oldest first. Optional because sessions
+   * persisted before multi-import existed carry only the `fileName` /
+   * `importedAt` pair above — read both through `sessionImports`.
+   */
+  imports?: ImportBatch[];
 }
 
 /**

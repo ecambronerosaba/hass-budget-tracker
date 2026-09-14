@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Expense, Month, ReconciliationSession } from '../../types/models';
-import { reconciliationTotals } from '../../lib/reconcile';
+import { reconciliationTotals, sessionImports } from '../../lib/reconcile';
 import { monthLabel } from '../../lib/dates';
 import { round2 } from '../../lib/money';
 import { CategoryBreakdown } from '../../components/CategoryBreakdown';
@@ -34,6 +34,17 @@ export function SummaryStep({
   const [closing, setClosing] = useState(false);
 
   const totals = useMemo(() => reconciliationTotals(expenses), [expenses]);
+  const skippedRows = useMemo(
+    () => session.transactions.filter((t) => t.matchStatus === 'ignored').length,
+    [session.transactions],
+  );
+  const imports = useMemo(() => sessionImports(session), [session]);
+  // Exclusions belong to a file, not to the month: a bank's next export usually
+  // restates the same credits, so the newest file's figures are the honest ones
+  // rather than a running total that counts them twice.
+  const excluded = imports[imports.length - 1].excluded;
+  const fromSeveral = imports.length > 1;
+  const alreadyImported = imports.reduce((n, batch) => n + batch.duplicates, 0);
   const delta = round2(month.budgetTotal - totals.verifiedTotal);
   const over = delta < 0;
   const unresolvedTotal = unresolved.queueA + unresolved.queueB;
@@ -89,22 +100,47 @@ export function SummaryStep({
           <span className="kv__k">Statement rows read</span>
           <span className="num">{session.transactions.length}</span>
         </div>
-        {session.excluded.credits > 0 && (
+        {skippedRows > 0 && (
           <div className="kv">
-            <span className="kv__k">Credits and refunds left out</span>
-            <span className="num">{session.excluded.credits}</span>
+            <span className="kv__k">Rows skipped</span>
+            <span className="num">{skippedRows}</span>
           </div>
         )}
-        {session.excluded.outsideMonth > 0 && (
+        {fromSeveral && (
           <div className="kv">
-            <span className="kv__k">Rows outside {monthLabel(month.id, { short: true })}</span>
-            <span className="num">{session.excluded.outsideMonth}</span>
+            <span className="kv__k">Statements read</span>
+            <span className="num">{imports.length}</span>
           </div>
         )}
-        {session.excluded.unreadable > 0 && (
+        {alreadyImported > 0 && (
           <div className="kv">
-            <span className="kv__k">Rows that couldn't be read</span>
-            <span className="num">{session.excluded.unreadable}</span>
+            <span className="kv__k">Rows already imported, not doubled</span>
+            <span className="num">{alreadyImported}</span>
+          </div>
+        )}
+        {excluded.credits > 0 && (
+          <div className="kv">
+            <span className="kv__k">
+              Credits and refunds left out{fromSeveral ? ', latest statement' : ''}
+            </span>
+            <span className="num">{excluded.credits}</span>
+          </div>
+        )}
+        {excluded.outsideMonth > 0 && (
+          <div className="kv">
+            <span className="kv__k">
+              Rows outside {monthLabel(month.id, { short: true })}
+              {fromSeveral ? ', latest statement' : ''}
+            </span>
+            <span className="num">{excluded.outsideMonth}</span>
+          </div>
+        )}
+        {excluded.unreadable > 0 && (
+          <div className="kv">
+            <span className="kv__k">
+              Rows that couldn't be read{fromSeveral ? ', latest statement' : ''}
+            </span>
+            <span className="num">{excluded.unreadable}</span>
           </div>
         )}
       </section>

@@ -921,8 +921,8 @@ export function AppProvider({
             id: newId('imp'),
             fileName,
             importedAt: now,
-            added: result.transactions.length,
             duplicates: 0,
+            excluded: excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
           },
         ],
       });
@@ -955,9 +955,6 @@ export function AppProvider({
       );
       await repo().saveExpenses(result.expenses.filter((e) => newlyMatched.has(e.id)));
 
-      const merged = [...session.transactions, ...result.transactions].sort(
-        (a, b) => a.date.localeCompare(b.date) || b.amount - a.amount,
-      );
       const arrivedUnmatched = result.transactions.some((t) => t.matchStatus === 'unmatched');
 
       await repo().saveSession({
@@ -965,22 +962,21 @@ export function AppProvider({
         // A row that lands after the user reached the total sends them back to
         // the queue that now owes a decision.
         stage: arrivedUnmatched && session.stage === 'summary' ? 'queue-a' : session.stage,
-        transactions: merged,
+        // Appended rather than re-sorted: the user is working down this deck,
+        // and re-ordering it mid-review would move the card under their thumb.
+        transactions: [...session.transactions, ...result.transactions],
         // The statement shows these now, so they are no longer logged-only.
-        resolvedLoggedOnly: session.resolvedLoggedOnly.filter((id) => !newlyMatched.has(id)),
-        excluded: {
-          credits: session.excluded.credits + (excluded?.credits ?? 0),
-          outsideMonth: session.excluded.outsideMonth + (excluded?.outsideMonth ?? 0),
-          unreadable: session.excluded.unreadable + (excluded?.unreadable ?? 0),
-        },
+        resolvedLoggedOnly: (session.resolvedLoggedOnly ?? []).filter(
+          (id) => !newlyMatched.has(id),
+        ),
         imports: [
           ...sessionImports(session),
           {
             id: newId('imp'),
             fileName,
             importedAt: new Date().toISOString(),
-            added: fresh.length,
             duplicates: duplicates.length,
+            excluded: excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
           },
         ],
       });

@@ -27,6 +27,9 @@ const FIELD_LABELS: { key: keyof ColumnMapping; label: string; required?: boolea
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
+/** Stable identity, so the dedupe memo doesn't rerun on every render. */
+const NO_ROWS: BankTransaction[] = [];
+
 /**
  * Import step (§4.5, revised for any CSV).
  *
@@ -38,7 +41,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 export function ImportStep({
   monthId,
   mode = 'start',
-  existing = [],
+  existing = NO_ROWS,
   onDone,
   onCancel,
 }: {

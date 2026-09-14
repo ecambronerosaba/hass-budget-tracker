@@ -204,8 +204,8 @@ export function sessionImports(session: ReconciliationSession): ImportBatch[] {
       id: `${session.monthId}-first`,
       fileName: session.fileName,
       importedAt: session.importedAt,
-      added: session.transactions.length,
       duplicates: 0,
+      excluded: session.excluded ?? { credits: 0, outsideMonth: 0, unreadable: 0 },
     },
   ];
 }

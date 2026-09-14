@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dedupeAgainst, fingerprintOf, normalizeDescription } from '../src/lib/reconcile.ts';
-import type { BankTransaction } from '../src/types/models';
+import {
+  dedupeAgainst,
+  fingerprintOf,
+  normalizeDescription,
+  sessionImports,
+} from '../src/lib/reconcile.ts';
+import type { BankTransaction, ReconciliationSession } from '../src/types/models';
 
 /* ---------------------------- fixtures -------------------------------- */
 
@@ -99,6 +104,49 @@ test('same day and amount but a different merchant is a different charge', () =>
   const r = dedupeAgainst([held], [other]);
   assert.deepEqual(r.fresh, [other]);
   assert.deepEqual(r.duplicates, []);
+});
+
+/* ---------------------------- sessionImports --------------------------- */
+
+const aSession = (patch: Partial<ReconciliationSession> = {}): ReconciliationSession => ({
+  monthId: '2026-09',
+  stage: 'queue-a',
+  transactions: [],
+  resolvedLoggedOnly: [],
+  createdExpenseIds: [],
+  excluded: { credits: 7, outsideMonth: 3, unreadable: 1 },
+  importedAt: '2026-09-12T10:00:00.000Z',
+  fileName: 'amex-september.csv',
+  ...patch,
+});
+
+test('a session saved before multi-import reads as the one import it was', () => {
+  const batches = sessionImports(aSession());
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].fileName, 'amex-september.csv');
+  assert.equal(batches[0].duplicates, 0);
+  // The legacy session-level counters become that single file's own.
+  assert.deepEqual(batches[0].excluded, { credits: 7, outsideMonth: 3, unreadable: 1 });
+});
+
+test('a session that carries its own import list is read verbatim', () => {
+  const imports = [
+    {
+      id: 'imp_1',
+      fileName: 'week-one.csv',
+      importedAt: '2026-09-08T10:00:00.000Z',
+      duplicates: 0,
+      excluded: { credits: 2, outsideMonth: 0, unreadable: 0 },
+    },
+    {
+      id: 'imp_2',
+      fileName: 'month-to-date.csv',
+      importedAt: '2026-09-28T10:00:00.000Z',
+      duplicates: 11,
+      excluded: { credits: 5, outsideMonth: 1, unreadable: 0 },
+    },
+  ];
+  assert.deepEqual(sessionImports(aSession({ imports })), imports);
 });
 
 test('deduping a batch that was already deduped loses a repeated charge', () => {

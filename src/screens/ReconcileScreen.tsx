@@ -258,7 +258,9 @@ export function ReconcileScreen() {
         </section>
       )}
 
-      {skipped.length > 0 && session.stage !== 'summary' && (
+      {/* Unlike the matched panel this stays on the summary too: it is the only
+          way back for a row skipped by mistake, and the total is about to lock. */}
+      {skipped.length > 0 && (
         <section className="card card--flush">
           <button
             className="row row--between"

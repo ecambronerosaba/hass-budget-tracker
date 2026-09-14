@@ -182,10 +182,14 @@ export interface ImportBatch {
   id: string;
   fileName?: string;
   importedAt: Timestamp;
-  /** Rows this file contributed after duplicates were dropped. */
-  added: number;
   /** Rows the session already carried, so this file didn't double them. */
   duplicates: number;
+  /**
+   * What this file left out. Kept per file rather than summed across them:
+   * a bank's export is usually cumulative, so the next file restates the same
+   * credits and a running total would count them twice.
+   */
+  excluded: { credits: number; outsideMonth: number; unreadable: number };
 }
 
 export interface ReconciliationSession {

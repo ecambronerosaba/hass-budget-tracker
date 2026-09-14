@@ -34,6 +34,10 @@ export function SummaryStep({
   const [closing, setClosing] = useState(false);
 
   const totals = useMemo(() => reconciliationTotals(expenses), [expenses]);
+  const skippedRows = useMemo(
+    () => session.transactions.filter((t) => t.matchStatus === 'ignored').length,
+    [session.transactions],
+  );
   const delta = round2(month.budgetTotal - totals.verifiedTotal);
   const over = delta < 0;
   const unresolvedTotal = unresolved.queueA + unresolved.queueB;
@@ -89,6 +93,12 @@ export function SummaryStep({
           <span className="kv__k">Statement rows read</span>
           <span className="num">{session.transactions.length}</span>
         </div>
+        {skippedRows > 0 && (
+          <div className="kv">
+            <span className="kv__k">Rows skipped</span>
+            <span className="num">{skippedRows}</span>
+          </div>
+        )}
         {session.excluded.credits > 0 && (
           <div className="kv">
             <span className="kv__k">Credits and refunds left out</span>

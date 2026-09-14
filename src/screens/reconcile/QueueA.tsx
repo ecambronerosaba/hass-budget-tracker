@@ -35,7 +35,13 @@ export function QueueA({
   expenses: Expense[];
   onDone: () => void;
 }) {
-  const { linkTransaction, addExpenseFromTransaction, notify } = useApp();
+  const {
+    linkTransaction,
+    addExpenseFromTransaction,
+    ignoreTransaction,
+    unignoreTransaction,
+    notify,
+  } = useApp();
   const categories = useCategoryMap();
   const money = useMoneyFormatter();
 
@@ -53,7 +59,8 @@ export function QueueA({
     () => session.transactions.filter((t) => t.matchStatus === 'unmatched'),
     [session.transactions],
   );
-  const matchedCount = session.transactions.length - queue.length;
+  const matchedCount = session.transactions.filter((t) => t.matchStatus === 'matched').length;
+  const skippedCount = session.transactions.filter((t) => t.matchStatus === 'ignored').length;
 
   const unlinkedExpenses = useMemo(
     () => expenses.filter((e) => e.reconciliationStatus !== 'matched'),
@@ -89,7 +96,8 @@ export function QueueA({
         <div>
           <div className="section-label">Statement rows to review</div>
           <div className="stat__note">
-            {queue.length} left · {matchedCount} matched automatically
+            {queue.length} left · {matchedCount} matched
+            {skippedCount > 0 && ` · ${skippedCount} skipped`}
           </div>
         </div>
         {/* A pip per row is only an honest picture up to a handful of rows —
@@ -98,12 +106,15 @@ export function QueueA({
         {session.transactions.length <= PIP_LIMIT ? (
           <div className="progress-pips" aria-hidden="true">
             {session.transactions.map((t) => (
-              <span key={t.id} className={`pip ${t.matchStatus === 'matched' ? 'pip--done' : ''}`} />
+              <span
+                key={t.id}
+                className={`pip ${t.matchStatus !== 'unmatched' ? 'pip--done' : ''}`}
+              />
             ))}
           </div>
         ) : (
           <div className="stat__note" aria-hidden="true">
-            {matchedCount} of {session.transactions.length} read
+            {matchedCount + skippedCount} of {session.transactions.length} read
           </div>
         )}
       </div>
@@ -144,6 +155,28 @@ export function QueueA({
       <p className="dim" style={{ fontSize: 'var(--t-micro)', textAlign: 'center' }}>
         Swipe the card, or use the buttons.
       </p>
+
+      {/* A third outcome with no swipe of its own: the deck stays two-way, and a
+          hold or a pending charge can leave the queue without becoming an expense. */}
+      <div style={{ textAlign: 'center' }}>
+        <button
+          type="button"
+          className="linkish"
+          onClick={async () => {
+            const skipped = current;
+            await ignoreTransaction(monthId, skipped.id);
+            notify('Row skipped', {
+              detail: skipped.rawDescription,
+              action: {
+                label: 'Undo',
+                run: () => unignoreTransaction(monthId, skipped.id),
+              },
+            });
+          }}
+        >
+          Skip — not an expense
+        </button>
+      </div>
 
       {matching && (
         <MatchSheet

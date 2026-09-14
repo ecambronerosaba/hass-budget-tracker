@@ -177,6 +177,16 @@ from any bank takes one glance at the mapping step.
 Credits and refunds are counted and left out — reconciliation is about charges. Rows outside the
 month being reconciled are counted and left out too, unless you turn that off.
 
+A month doesn't have to be reconciled in one sitting from one file. "Add another statement" reads a
+further CSV into the reconciliation already under way, so a statement can arrive in pieces across
+the month. Rows the session already carries are dropped rather than doubled: identity is a
+fingerprint of date, amount in cents, and a punctuation- and case-insensitive description, derived
+on demand rather than stored, so sessions saved before any of this still work. It is a multiset, not
+a set — two identical $6.50 coffees already imported plus three in the new file leaves one genuinely
+new charge, not zero. The preview says how many rows are new and how many were already imported
+before anything is written. Matching runs only over the new rows, so decisions already made in
+either queue survive the second import.
+
 The optional `category` and `notes` columns aren't decoration: when a row you didn't log reaches
 the review flow, a category name the app recognises is preselected on the add form and the note is
 carried into the notes field. Producing that richer file from an arbitrary spreadsheet is what the
@@ -196,6 +206,12 @@ Everything else goes to review, in two deliberately different shapes:
 - **Queue B** — things logged that the statement doesn't show — is a list, not a second stack.
   These need reading rather than clearing. If a typo was the reason something didn't match, fixing
   the amount or date links it automatically instead of asking again.
+
+Queue A has a third way out. Credits are dropped at import, but an authorisation hold, or a charge
+someone is paying back, is a real positive charge that reaches the queue anyway — and logging it
+would be wrong. Skipping settles the row without creating an expense, so the queue can clear
+honestly. Skipped rows are listed with the amount and a "Put it back", counted on the closing
+summary, and never reach any total.
 
 The stage lives in the session record, so a refresh or a day's gap resumes where you left off.
 Closing the month locks its budget and expenses.

@@ -7,7 +7,12 @@
  * things that only nearly agree.
  */
 
-import type { BankTransaction, Expense } from '../types/models';
+import type {
+  BankTransaction,
+  Expense,
+  ImportBatch,
+  ReconciliationSession,
+} from '../types/models';
 import { daysBetween } from './dates.ts';
 import { sumGross, sumNet } from './expense.ts';
 import { round2, sameAmount, toCents } from './money.ts';
@@ -166,4 +171,75 @@ export function reconciliationTotals(expenses: Expense[]): ReconciliationTotals 
 /** True when the imported row and the logged expense agree exactly. */
 export function isExactPair(txn: BankTransaction, expense: Expense): boolean {
   return txn.date === expense.date && sameAmount(txn.amount, expense.amount);
+}
+
+/**
+ * Banks spell the same merchant a dozen ways; the identity of a row shouldn't
+ * turn on punctuation or case.
+ */
+export function normalizeDescription(raw: string): string {
+  return raw.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+/**
+ * Stable identity for a statement row, derived on demand and never stored —
+ * sessions already sit in IndexedDB and in backup files with no migration
+ * layer, so old data keeps working.
+ */
+export function fingerprintOf(
+  txn: Pick<BankTransaction, 'date' | 'amount' | 'rawDescription'>,
+): string {
+  return `${txn.date}|${toCents(txn.amount)}|${normalizeDescription(txn.rawDescription)}`;
+}
+
+/**
+ * Every file read into a session. Sessions saved before a month could take
+ * more than one statement carry a bare `fileName` / `importedAt` pair instead
+ * of a list, so they are presented here as the single import they were.
+ */
+export function sessionImports(session: ReconciliationSession): ImportBatch[] {
+  if (session.imports?.length) return session.imports;
+  return [
+    {
+      id: `${session.monthId}-first`,
+      fileName: session.fileName,
+      importedAt: session.importedAt,
+      added: session.transactions.length,
+      duplicates: 0,
+    },
+  ];
+}
+
+export interface DedupeResult {
+  fresh: BankTransaction[];
+  duplicates: BankTransaction[];
+}
+
+/**
+ * Multiset, not set: two identical $6.50 coffees already held plus three in the
+ * new file leaves one genuinely new charge, not zero.
+ */
+export function dedupeAgainst(
+  existing: readonly BankTransaction[],
+  incoming: readonly BankTransaction[],
+): DedupeResult {
+  const remaining = new Map<string, number>();
+  for (const txn of existing) {
+    const key = fingerprintOf(txn);
+    remaining.set(key, (remaining.get(key) ?? 0) + 1);
+  }
+
+  const fresh: BankTransaction[] = [];
+  const duplicates: BankTransaction[] = [];
+  for (const txn of incoming) {
+    const key = fingerprintOf(txn);
+    const count = remaining.get(key) ?? 0;
+    if (count > 0) {
+      remaining.set(key, count - 1);
+      duplicates.push(txn);
+    } else {
+      fresh.push(txn);
+    }
+  }
+  return { fresh, duplicates };
 }
